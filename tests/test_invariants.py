@@ -203,15 +203,29 @@ class TestSourceHygiene:
         """The install story is "clone and run". Keep it that way.
 
         Rather than maintain a list of blessed module names, resolve every
-        import and require that it is built in or lives under the standard
-        library directory. A new stdlib import needs no change here; a
+        import and require that it does not come from a site-packages
+        directory. Asking "is it installed?" rather than "is it under the
+        stdlib path?" is the portable form of the question: on Windows,
+        compiled standard modules such as ``unicodedata`` live in ``DLLs\\``
+        rather than ``Lib\\``, so a path-prefix test fails there for the wrong
+        reason. A new standard-library import needs no change here; a
         dependency fails immediately.
         """
         import importlib.util
+        import site
         import sys
         import sysconfig
 
-        stdlib_dir = Path(sysconfig.get_paths()["stdlib"]).resolve()
+        installed = {
+            Path(directory).resolve()
+            for directory in (
+                *(getattr(site, "getsitepackages", list)() or []),
+                site.getusersitepackages() if hasattr(site, "getusersitepackages") else "",
+                sysconfig.get_paths().get("purelib", ""),
+                sysconfig.get_paths().get("platlib", ""),
+            )
+            if directory
+        }
         imports = re.compile(r"^\s*(?:from|import)\s+([A-Za-z_][\w.]*)", re.MULTILINE)
 
         for path in sorted(SOURCE.glob("*.py")):
@@ -224,8 +238,10 @@ class TestSourceHygiene:
                 if spec.origin in (None, "built-in", "frozen"):
                     continue
                 origin = Path(spec.origin).resolve()
-                assert stdlib_dir in origin.parents, (
-                    f"{path.name} imports {root}, which is not in the standard library ({origin})"
+                offenders = [d for d in installed if d in origin.parents]
+                assert not offenders, (
+                    f"{path.name} imports {root}, which is an installed "
+                    f"package rather than part of the standard library ({origin})"
                 )
 
     def test_callback_payloads_fit_telegram_s_limit(self) -> None:
