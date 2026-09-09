@@ -6,7 +6,6 @@ mocked handler would not catch, so nothing here is mocked below the socket.
 
 from __future__ import annotations
 
-import base64
 import json
 import threading
 import urllib.error
@@ -118,9 +117,11 @@ class TestReading:
         _desk, base, key = running
         assert api_get(base, "/api/queue", key)["items"] == []
 
-    def test_queue_lists_pending_tracks(self, running, bot, api: FakeApi) -> None:
+    def test_queue_lists_complete_submissions(self, running, bot, api: FakeApi) -> None:
         _desk, base, key = running
-        bot.handle(fake.audio_message(ARTIST, "d1", "dd1", title="Waiting", performer="A"))
+        bot.handle(
+            fake.audio_message(ARTIST, "d1", "dd1", title="Waiting", performer="A", thumbnail=True)
+        )
         payload = api_get(base, "/api/queue", key)
         assert payload["total"] == 1
         assert payload["items"][0]["title"] == "Waiting"
@@ -165,100 +166,64 @@ class TestReading:
         assert caught.value.code == 404
 
 
-class TestModeration:
-    def _pending(self, bot, unique="p1", title="Fresh") -> int:
+class TestCuratorialFields:
+    """A curator writes the tags and the note. Nothing else."""
+
+    def _release(self, bot, api: FakeApi, unique="p1", title="Fresh") -> int:
         bot.handle(
             fake.audio_message(
                 ARTIST, f"f-{unique}", unique, title=title, performer="A", thumbnail=True
             )
         )
-        return int(bot.db.scalar("SELECT id FROM tracks WHERE file_unique_id=?", (unique,)))
+        track_id = int(bot.db.scalar("SELECT id FROM tracks WHERE file_unique_id=?", (unique,)))
+        return int(bot.db.scalar("SELECT release_id FROM tracks WHERE id=?", (track_id,)))
 
-    def test_approve_publishes_tags_and_note(
-        self, running, bot, db: Database, api: FakeApi
-    ) -> None:
+    def test_tags_and_note(self, running, bot, db: Database, api: FakeApi) -> None:
         _desk, base, key = running
-        track_id = self._pending(bot)
+        release_id = self._release(bot, api)
         result = post(
             base,
-            f"/api/approve/{track_id}",
+            f"/api/curate/{release_id}",
             key,
             {"note": "Recorded on a rooftop.", "tags": ["Ambient", "tape"]},
         )
         assert result["ok"]
-        assert db.scalar("SELECT status FROM tracks WHERE id=?", (track_id,)) == "approved"
-        assert catalog.tags_of(db, track_id) == ["ambient", "tape"]
-        assert "rooftop" in db.scalar("SELECT note FROM tracks WHERE id=?", (track_id,))
+        assert catalog.release_tags(db, release_id) == ["ambient", "tape"]
+        assert "rooftop" in db.scalar("SELECT note FROM releases WHERE id=?", (release_id,))
 
-    def test_approving_makes_a_track_searchable(self, running, bot, db: Database) -> None:
+    def test_tags_reach_every_track_of_the_release(
+        self, running, bot, db: Database, api: FakeApi
+    ) -> None:
         _desk, base, key = running
-        track_id = self._pending(bot, "p2", "Findable")
-        post(base, f"/api/approve/{track_id}", key, {"note": "", "tags": []})
-        from tonearm import search
+        for index in range(2):
+            api.files[f"m{index}"] = id3_file(title=f"T{index}", artist="Marsh", album="Set")
+            bot.handle(
+                fake.audio_message(
+                    ARTIST, f"m{index}", f"mu{index}", thumbnail=True, file_name=f"{index}.mp3"
+                )
+            )
+        release_id = int(db.scalar("SELECT id FROM releases WHERE title='Set'"))
+        post(base, f"/api/curate/{release_id}", key, {"tags": ["drone"]})
+        for row in db.query("SELECT id FROM tracks WHERE release_id=?", (release_id,)):
+            assert catalog.tags_of(db, int(row["id"])) == ["drone"]
 
-        assert search.search(db, "Findable")
-
-    def test_decline_stores_the_reason(self, running, bot, db: Database) -> None:
+    def test_there_is_no_endpoint_for_rewriting_a_release(self, running, bot, api: FakeApi) -> None:
         _desk, base, key = running
-        track_id = self._pending(bot, "p3")
-        post(base, f"/api/reject/{track_id}", key, {"reason": "The mix is unfinished."})
-        row = db.one("SELECT status, reject_reason FROM tracks WHERE id=?", (track_id,))
-        assert row["status"] == "rejected"
-        assert "unfinished" in row["reject_reason"]
-
-    def test_the_artist_is_told_either_way(self, running, bot, api: FakeApi) -> None:
-        _desk, base, key = running
-        track_id = self._pending(bot, "p4")
-        api.clear()
-        post(base, f"/api/approve/{track_id}", key, {"note": "", "tags": []})
-        for _ in range(100):  # the notification is sent off-thread
-            if any(p["chat_id"] == ARTIST for p in api.of("sendMessage")):
-                break
-            threading.Event().wait(0.02)
-        assert any(p["chat_id"] == ARTIST for p in api.of("sendMessage"))
+        release_id = self._release(bot, api, "p9")
+        for path in (
+            f"/api/edit_release/{release_id}",
+            f"/api/setcover/{release_id}",
+            f"/api/edit/{release_id}",
+            f"/api/approve/{release_id}",
+        ):
+            with pytest.raises(urllib.error.HTTPError) as caught:
+                post(base, path, key, {"title": "Renamed"})
+            assert caught.value.code == 404
 
     def test_withdrawing_a_published_track(self, running, seeded, db: Database) -> None:
         _desk, base, key = running
-        post(base, f"/api/hide/{seeded[0]}", key, {})
+        post(base, f"/api/withdraw/{seeded[0]}", key, {})
         assert db.scalar("SELECT status FROM tracks WHERE id=?", (seeded[0],)) == "hidden"
-
-    def test_editing_metadata(self, running, seeded, db: Database) -> None:
-        _desk, base, key = running
-        result = post(
-            base,
-            f"/api/edit/{seeded[0]}",
-            key,
-            {
-                "title": "Nightpost II",
-                "artist": "Anna V",
-                "album": "Stairwell",
-                "year": "2019",
-                "note": "Second take.",
-                "tags": ["ambient"],
-            },
-        )
-        assert result["ok"]
-        row = db.one(
-            "SELECT t.title, t.year, t.note, a.name AS artist FROM tracks t "
-            "JOIN artists a ON a.id=t.artist_id WHERE t.id=?",
-            (seeded[0],),
-        )
-        assert row["title"] == "Nightpost II"
-        assert row["artist"] == "Anna V"
-        assert row["year"] == 2019
-        assert catalog.tags_of(db, seeded[0]) == ["ambient"]
-
-    def test_editing_reindexes_search(self, running, seeded, db: Database) -> None:
-        _desk, base, key = running
-        post(base, f"/api/edit/{seeded[0]}", key, {"title": "Renamed Entirely"})
-        from tonearm import search
-
-        ids = [track_id for track_id, _ in search.search(db, "Renamed Entirely")]
-        assert seeded[0] in ids
-
-    def test_editing_an_absent_track_is_not_a_crash(self, running) -> None:
-        _desk, base, key = running
-        assert post(base, "/api/edit/999999", key, {"title": "x"})["ok"] is False
 
 
 class TestReleases:
@@ -287,7 +252,6 @@ class TestReleases:
         payload = api_get(base, f"/api/release/{release_id}", key)
         assert [track["title"] for track in payload["tracks"]] == ["One", "Two"]
         assert payload["has_cover"] is True
-        assert payload["blockers"] == []
 
     def test_publishing_a_release_publishes_its_tracks(
         self, running, bot, api: FakeApi, db: Database
@@ -304,36 +268,11 @@ class TestReleases:
             == 2
         )
 
-    def test_a_release_without_artwork_is_refused(self, running, bot, db: Database) -> None:
+    def test_an_incomplete_release_is_not_in_the_queue(self, running, bot, db: Database) -> None:
         _desk, base, key = running
         bot.handle(fake.audio_message(ARTIST, "bare", "bareu", title="Bare", performer="A"))
-        release_id = int(db.scalar("SELECT release_id FROM tracks WHERE file_unique_id='bareu'"))
-        payload = api_get(base, f"/api/release/{release_id}", key)
-        assert payload["blockers"] == ["no_cover"]
-        result = post(base, f"/api/approve_release/{release_id}", key, {})
-        assert result["ok"] is False and result["error"] == "no_cover"
-        assert db.scalar("SELECT status FROM releases WHERE id=?", (release_id,)) == "pending"
-
-    def test_uploading_artwork_unblocks_it(self, running, bot, api: FakeApi, db: Database) -> None:
-        _desk, base, key = running
-        bot.handle(fake.audio_message(ARTIST, "bare2", "bareu2", title="Bare", performer="A"))
-        release_id = int(db.scalar("SELECT release_id FROM tracks WHERE file_unique_id='bareu2'"))
-        image = base64.b64encode(b"\xff\xd8\xff" + b"\x00" * 900).decode()
-        result = post(base, f"/api/setcover/{release_id}", key, {"data": image})
-        assert result["ok"], result
-        assert catalog.release_cover(db, release_id) == "photo:archived"
-        assert api_get(base, f"/api/release/{release_id}", key)["blockers"] == []
-        assert post(base, f"/api/approve_release/{release_id}", key, {})["ok"]
-
-    def test_a_corrupt_upload_is_refused(self, running, bot, db: Database) -> None:
-        _desk, base, key = running
-        bot.handle(fake.audio_message(ARTIST, "bare3", "bareu3", title="Bare", performer="A"))
-        release_id = int(db.scalar("SELECT release_id FROM tracks WHERE file_unique_id='bareu3'"))
-        assert (
-            post(base, f"/api/setcover/{release_id}", key, {"data": "!!!not base64!!!"})["error"]
-            == "bad_image"
-        )
-        assert post(base, f"/api/setcover/{release_id}", key, {"data": ""})["error"] == "bad_image"
+        assert api_get(base, "/api/queue", key)["items"] == []
+        assert api_get(base, "/api/queue", key)["total"] == 0
 
     def test_declining_a_release_is_reversible(
         self, running, bot, api: FakeApi, db: Database
@@ -342,8 +281,7 @@ class TestReleases:
         release_id = self._ep(bot, api)
         post(base, f"/api/reject_release/{release_id}", key, {"reason": "Not yet."})
         assert db.scalar("SELECT status FROM releases WHERE id=?", (release_id,)) == "rejected"
-        for row in db.query("SELECT id FROM tracks WHERE release_id=?", (release_id,)):
-            assert post(base, f"/api/restore/{row['id']}", key, {})["ok"]
+        assert post(base, f"/api/restore_release/{release_id}", key, {})["ok"]
         assert (
             db.scalar(
                 "SELECT COUNT(*) FROM tracks WHERE release_id=? AND status='pending'",
@@ -351,21 +289,6 @@ class TestReleases:
             )
             == 2
         )
-
-    def test_editing_a_release(self, running, bot, api: FakeApi, db: Database) -> None:
-        _desk, base, key = running
-        release_id = self._ep(bot, api)
-        result = post(
-            base,
-            f"/api/edit_release/{release_id}",
-            key,
-            {"title": "Harbour Tapes", "year": "2021", "note": "Recorded off a pier."},
-        )
-        assert result["ok"]
-        row = db.one("SELECT title, year, note FROM releases WHERE id=?", (release_id,))
-        assert row["title"] == "Harbour Tapes"
-        assert row["year"] == 2021
-        assert "pier" in row["note"]
 
 
 class TestPlaylists:

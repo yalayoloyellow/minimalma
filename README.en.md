@@ -34,41 +34,36 @@ turns out to be a small program. Telegram already supplies the hard parts:
 identity, file hosting, an audio player that works on every platform,
 background playback, and a chat that doubles as a listening history.
 
-## What it does
+## Three roles, and the line between them
 
-**For listeners**
+One rule explains most of the design:
 
-- A finite selection each day, chosen for you. When it runs out, it says so.
-- Discovery on request, in small batches, capped per day.
-- Search across titles, artists, albums and curator tags — Latin and Cyrillic
-  find each other, and typos still land.
-- A library of saved tracks and followed artists.
-- Mixes: curated playlists and generated sequences that walk between related
-  tracks instead of jumping.
-- Inline mode, so any track can be shared into any other chat.
+> **The release belongs to the artist. The shelf belongs to the curator.**
 
-**For artists**
+**The artist** owns *what the record is*: title, artwork, running order. They
+send an audio file and nothing else is required; releases assemble themselves
+from the album tag, and a track with no album becomes a single. Artwork is
+required and it is theirs to supply — until it exists the release sits as a
+draft, no curator is told about it, and it is not in anybody's queue. Metadata
+is corrected in one message. Every submission gets an answer, one per release.
 
-- Send an audio file to the bot. That is the whole submission flow.
-- Tags, cover art, title, artist and album are read out of the file — ID3v2,
-  ID3v1, FLAC, Ogg Vorbis, Opus, MP4/M4A and WAV — and can be corrected in one
-  message.
-- Several tracks of one release go one after another and are grouped by their
-  album tag; a track with no album becomes a single.
-- No artwork, no publication. The bot asks for it immediately.
-- Every submission gets an answer, published or not, with a reason.
-- Your own play, save and follower counts, visible only to you.
+**The curator** owns *whether it is on the shelf and how it is labelled*. The
+queue holds only complete releases, so nothing opens that cannot be decided.
+Four actions and no more: publish the release, decline it with a reason, set the
+tags, write the note. They cannot rename a release, reorder it or supply its
+artwork — a wrong title is grounds to decline with a reason, not to rewrite
+somebody's record. Tags stay with the curator because they are the station's
+vocabulary and they feed the recommender: an artist tags for promotion, a
+curator tags for the shelf.
 
-**For curators**
+**The listener** gets a finite daily selection that cannot be re-rolled,
+discovery in small capped batches, release pages with artwork and a tracklist,
+search, a library, and mixes. Nothing plays itself. They never see play counts,
+like counts or follower counts, and the first thing on a track card is the
+curator's note — context before the button.
 
-- A review queue of *releases* — a single, an EP or an album as one card, never
-  a scatter of loose tracks — with the audio, the metadata and automatic
-  metadata — with every track playable in place.
-- Approve, decline with a reason, retag, add a note, fix the metadata, attach
-  artwork.
-- No quality grading and no technical verdict: the decision is made by ear. If
-  it sounds right to the curator, it belongs here.
-- Nothing is ever published automatically.
+The full version of this, with every screen, is in the
+[Russian README](README.md).
 
 ## What it deliberately does not do
 

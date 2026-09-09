@@ -71,36 +71,37 @@ class TestGrouping:
 
 
 class TestArtwork:
-    def test_a_release_without_a_cover_cannot_be_published(
+    """Artwork completes a submission. It is supplied by the artist, and until
+    it exists the release is not in anyone's queue."""
+
+    def test_an_incomplete_release_never_reaches_the_queue(
         self, bot: handlers.Bot, api: FakeApi, db: Database
     ) -> None:
         bot.handle(fake.audio_message(ARTIST, "n1", "nn1", title="Bare", performer="A"))
-        track_id = int(db.scalar("SELECT id FROM tracks WHERE file_unique_id='nn1'"))
-        release_id = int(db.scalar("SELECT release_id FROM tracks WHERE id=?", (track_id,)))
+        release_id = int(db.scalar("SELECT release_id FROM tracks WHERE file_unique_id='nn1'"))
 
-        assert catalog.release_blockers(db, release_id) == ["no_cover"]
-        published, error = catalog.approve_release(db, release_id, CURATOR)
-        assert published is None and error == "no_cover"
-        assert catalog.approve(db, track_id, CURATOR) is None
-        assert db.scalar("SELECT status FROM tracks WHERE id=?", (track_id,)) == "pending"
+        assert catalog.missing_for_release(db, release_id) == ["no_cover"]
+        assert catalog.is_complete(db, release_id) is False
+        assert catalog.pending_releases(db) == []
+        assert catalog.pending_releases_total(db) == 0
 
-    def test_artwork_unblocks_it(self, bot: handlers.Bot, db: Database) -> None:
-        bot.handle(fake.audio_message(ARTIST, "n2", "nn2", title="Bare", performer="A"))
-        release_id = int(
-            db.scalar(
-                "SELECT release_id FROM tracks WHERE file_unique_id='nn2'",
-            )
-        )
-        catalog.set_release_cover(db, release_id, "photo:1")
-        assert catalog.release_blockers(db, release_id) == []
-        published, error = catalog.approve_release(db, release_id, CURATOR)
-        assert error == "" and published is not None
+    def test_no_curator_is_told_about_an_incomplete_release(
+        self, bot: handlers.Bot, api: FakeApi, config: Config
+    ) -> None:
+        bot.handle(fake.audio_message(ARTIST, "n6", "nn6", title="Bare", performer="A"))
+        cards = [
+            call
+            for call in api.of("sendPhoto") + api.of("sendMessage")
+            if call.get("chat_id") == config.review_chat
+        ]
+        assert cards == []
 
-    def test_the_artist_is_asked_for_artwork_and_can_send_it(
-        self, bot: handlers.Bot, api: FakeApi, db: Database
+    def test_artwork_completes_it_and_summons_the_curators(
+        self, bot: handlers.Bot, api: FakeApi, db: Database, config: Config
     ) -> None:
         bot.handle(fake.audio_message(ARTIST, "n3", "nn3", title="Bare", performer="A"))
         assert "обложк" in api.texts[-1] or "artwork" in api.texts[-1]
+        api.clear()
 
         photo = fake.message(ARTIST, "")
         photo["message"].pop("text")
@@ -109,18 +110,35 @@ class TestArtwork:
 
         release_id = int(db.scalar("SELECT release_id FROM tracks WHERE file_unique_id='nn3'"))
         assert catalog.release_cover(db, release_id) == "sent:cover"
+        assert catalog.is_complete(db, release_id)
+        assert catalog.pending_releases_total(db) == 1
+        cards = [
+            call
+            for call in api.of("sendPhoto") + api.of("sendMessage")
+            if call.get("chat_id") == config.review_chat
+        ]
+        assert len(cards) == 1
 
-    def test_a_curator_can_attach_artwork(
-        self, bot: handlers.Bot, api: FakeApi, db: Database
-    ) -> None:
+    def test_only_the_submitter_can_set_the_artwork(self, bot: handlers.Bot, db: Database) -> None:
         bot.handle(fake.audio_message(ARTIST, "n4", "nn4", title="Bare", performer="A"))
         release_id = int(db.scalar("SELECT release_id FROM tracks WHERE file_unique_id='nn4'"))
-        bot.handle(fake.callback(CURATOR, f"rel|cov|{release_id}"))
-        photo = fake.message(CURATOR, "")
-        photo["message"].pop("text")
-        photo["message"]["photo"] = [{"file_id": "curator:cover", "width": 900, "height": 900}]
-        bot.handle(photo)
-        assert catalog.release_cover(db, release_id) == "curator:cover"
+        for sender in (CURATOR, LISTENER):
+            photo = fake.message(sender, "")
+            photo["message"].pop("text")
+            photo["message"]["photo"] = [
+                {"file_id": f"other:{sender}", "width": 900, "height": 900}
+            ]
+            bot.handle(photo)
+        assert catalog.release_cover(db, release_id) is None
+
+    def test_the_artist_sees_what_is_missing(
+        self, bot: handlers.Bot, api: FakeApi, db: Database
+    ) -> None:
+        bot.handle(fake.audio_message(ARTIST, "n7", "nn7", title="Bare", performer="A"))
+        drafts = catalog.incomplete_releases(db, ARTIST)
+        assert len(drafts) == 1 and drafts[0]["missing"] == ["no_cover"]
+        bot.handle(fake.message(ARTIST, "/submit"))
+        assert "нет обложки" in api.last_screen() or "artwork missing" in api.last_screen()
 
     def test_a_track_inherits_the_release_cover(self, bot: handlers.Bot, db: Database) -> None:
         bot.handle(fake.audio_message(ARTIST, "n5", "nn5", title="Bare", performer="A"))
@@ -129,14 +147,14 @@ class TestArtwork:
         catalog.set_release_cover(db, release_id, "release:art")
         assert catalog.track(db, track_id)["cover_file_id"] == "release:art"
 
-    def test_a_stray_photo_is_ignored(self, bot: handlers.Bot, api: FakeApi, db: Database) -> None:
-        bot.handle(fake.message(LISTENER, "/start"))
-        api.clear()
-        photo = fake.message(LISTENER, "")
-        photo["message"].pop("text")
-        photo["message"]["photo"] = [{"file_id": "random", "width": 10, "height": 10}]
-        bot.handle(photo)
-        assert db.scalar("SELECT COUNT(*) FROM releases WHERE cover_file_id='random'") == 0
+    def test_publishing_an_incomplete_release_is_refused_at_the_core(
+        self, bot: handlers.Bot, db: Database
+    ) -> None:
+        """Unreachable through any interface, but the guard stays."""
+        bot.handle(fake.audio_message(ARTIST, "n8", "nn8", title="Bare", performer="A"))
+        release_id = int(db.scalar("SELECT release_id FROM tracks WHERE file_unique_id='nn8'"))
+        published, error = catalog.approve_release(db, release_id, CURATOR)
+        assert published is None and error == "no_cover"
 
 
 class TestReleaseModeration:

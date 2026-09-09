@@ -13,8 +13,6 @@ authorisation boundary — any other program on the machine can reach it.
 
 from __future__ import annotations
 
-import base64
-import binascii
 import json
 import logging
 import mimetypes
@@ -27,7 +25,6 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from tonearm import audio as audio_mod
 from tonearm import catalog, recommend, search
 from tonearm.config import Config
 from tonearm.db import Database
@@ -247,7 +244,7 @@ def _release_row(item: dict) -> dict:
         "status": item.get("status", ""),
         "note": item.get("note") or "",
         "has_cover": bool(item.get("cover_file_id")),
-        "blockers": item.get("blockers") or [],
+        "tags": item.get("tags") or [],
         "waiting": item.get("waiting", 0),
         "total": item.get("total") or item.get("n") or 0,
     }
@@ -298,25 +295,6 @@ def api_reject_release(desk: Desk, arg: str | None, body: dict, _query: dict) ->
     if item and item["tracks"]:
         _notify(desk, catalog.track(desk.db, int(item["tracks"][0]["id"])), approved=False)
     return {"ok": bool(item), "release": api_release(desk, arg, {}, {})}
-
-
-def api_edit_release(desk: Desk, arg: str | None, body: dict, _query: dict) -> dict:
-    release_id = int(arg or 0)
-    if catalog.release(desk.db, release_id) is None:
-        return {"ok": False}
-    fields: dict = {}
-    for name in ("title", "note", "kind"):
-        if name in body:
-            fields[name] = str(body[name] or "").strip()
-    if "year" in body:
-        try:
-            fields["year"] = int(body["year"]) if body["year"] else None
-        except (TypeError, ValueError):
-            pass
-    if fields:
-        catalog.update_release(desk.db, release_id, **fields)
-    desk.engine.invalidate()
-    return {"ok": True, "release": api_release(desk, arg, {}, {})}
 
 
 def api_track(desk: Desk, arg: str | None, _body: dict, _query: dict) -> dict | None:
@@ -380,118 +358,35 @@ def api_artist(desk: Desk, arg: str | None, _body: dict, _query: dict) -> dict |
     }
 
 
-def api_approve(desk: Desk, arg: str | None, body: dict, _query: dict) -> dict:
-    track_id = int(arg or 0)
-    tags = body.get("tags")
-    item = catalog.approve(
-        desk.db,
-        track_id,
-        desk.config.owner or 0,
-        note=str(body.get("note") or ""),
-        tag_names=tags if isinstance(tags, list) else None,
-    )
-    desk.engine.invalidate()
-    if item:
-        _notify(desk, item, approved=True)
-    return {"ok": bool(item), "track": _track_payload(desk, track_id)}
+def api_curate(desk: Desk, arg: str | None, body: dict, _query: dict) -> dict:
+    """The only fields a curator may write.
 
-
-def api_reject(desk: Desk, arg: str | None, body: dict, _query: dict) -> dict:
-    track_id = int(arg or 0)
-    item = catalog.reject(
-        desk.db, track_id, desk.config.owner or 0, reason=str(body.get("reason") or "")
-    )
-    desk.engine.invalidate()
-    if item:
-        _notify(desk, item, approved=False)
-    return {"ok": bool(item), "track": _track_payload(desk, track_id)}
-
-
-def api_hide(desk: Desk, arg: str | None, _body: dict, _query: dict) -> dict:
-    track_id = int(arg or 0)
-    catalog.hide(desk.db, track_id, desk.config.owner or 0)
-    desk.engine.invalidate()
-    return {"ok": True, "track": _track_payload(desk, track_id)}
-
-
-def api_setcover(desk: Desk, arg: str | None, body: dict, _query: dict) -> dict:
-    """Attach artwork sent from the desk as base64.
-
-    Telegram only serves media it hosts, so the image has to be uploaded once
-    to obtain a photo ``file_id``. It goes to the review chat — or, failing
-    that, to the owner — which doubles as an archive of every cover accepted.
+    Tags are the station's vocabulary and feed the recommender; the note is the
+    curator's voice, shown to a listener before they press play. Everything
+    else about a release — its title, its artwork, its running order — belongs
+    to whoever made it.
     """
     release_id = int(arg or 0)
     if catalog.release(desk.db, release_id) is None:
-        return {"ok": False, "error": "not_found"}
-    try:
-        blob = base64.b64decode(str(body.get("data") or ""), validate=True)
-    except (binascii.Error, ValueError):
-        return {"ok": False, "error": "bad_image"}
-    if len(blob) < 100:
-        return {"ok": False, "error": "bad_image"}
-
-    target = desk.config.review_chat or desk.config.owner
-    if desk.api is None or not target:
-        return {"ok": False, "error": "no_upload_target"}
-    blob = audio_mod.normalise_cover(blob) or blob
-    try:
-        message = desk.api.send_photo(
-            target, blob, filename="cover.jpg", caption="cover", disable_notification=True
-        )
-    except (TelegramError, NetworkError) as exc:
-        log.warning("cover upload failed: %s", exc)
-        return {"ok": False, "error": "upload_failed"}
-    sizes = (message or {}).get("photo") or []
-    if not sizes:
-        return {"ok": False, "error": "upload_failed"}
-    catalog.set_release_cover(desk.db, release_id, str(sizes[-1]["file_id"]))
-    # A freshly uploaded cover invalidates whatever was cached for this release.
-    for track in catalog.release(desk.db, release_id)["tracks"]:
-        cached = desk.cache / f"cover-{track['id']}.img"
-        if cached.exists():
-            cached.unlink()
+        return {"ok": False}
+    if isinstance(body.get("tags"), list):
+        catalog.set_release_tags(desk.db, release_id, body["tags"])
+    if "note" in body:
+        catalog.update_release(desk.db, release_id, note=str(body["note"] or "").strip()[:600])
+    desk.engine.invalidate()
     return {"ok": True, "release": api_release(desk, arg, {}, {})}
 
 
-def api_restore(desk: Desk, arg: str | None, _body: dict, _query: dict) -> dict:
-    track_id = int(arg or 0)
-    item = catalog.restore_to_queue(desk.db, track_id)
+def api_restore_release(desk: Desk, arg: str | None, _body: dict, _query: dict) -> dict:
+    item = catalog.restore_release(desk.db, int(arg or 0))
     desk.engine.invalidate()
-    return {"ok": bool(item), "track": _track_payload(desk, track_id)}
+    return {"ok": bool(item)}
 
 
-def api_edit(desk: Desk, arg: str | None, body: dict, _query: dict) -> dict:
-    """Update the editable fields of a track. Absent keys are left alone."""
+def api_withdraw(desk: Desk, arg: str | None, _body: dict, _query: dict) -> dict:
+    """Take a published track out of circulation without deleting its history."""
     track_id = int(arg or 0)
-    if catalog.track(desk.db, track_id) is None:
-        return {"ok": False}
-    fields: dict = {}
-    for name in ("title", "album", "note"):
-        if name in body:
-            fields[name] = str(body[name] or "").strip()
-    if "year" in body:
-        try:
-            fields["year"] = int(body["year"]) if body["year"] else None
-        except (TypeError, ValueError):
-            pass
-    if fields:
-        catalog.update_track(desk.db, track_id, **fields)
-    if body.get("artist"):
-        catalog.rename_artist(desk.db, track_id, str(body["artist"]))
-    if isinstance(body.get("tags"), list):
-        catalog.set_tags(desk.db, track_id, body["tags"])
-    item = catalog.track(desk.db, track_id)
-    if item and item["status"] == catalog.STATUS_APPROVED:
-        search.index_track(
-            desk.db,
-            track_id,
-            item["title"],
-            item["artist"],
-            item.get("album") or "",
-            item["tags"],
-            item.get("note") or "",
-        )
+    catalog.hide(desk.db, track_id, desk.config.owner or 0)
     desk.engine.invalidate()
     return {"ok": True, "track": _track_payload(desk, track_id)}
 
@@ -590,17 +485,13 @@ ROUTES: dict = {
     "releases": api_releases,
     "approve_release": api_approve_release,
     "reject_release": api_reject_release,
-    "edit_release": api_edit_release,
-    "setcover": api_setcover,
     "track": api_track,
     "catalogue": api_catalogue,
     "artists": api_artists,
     "artist": api_artist,
-    "approve": api_approve,
-    "reject": api_reject,
-    "hide": api_hide,
-    "restore": api_restore,
-    "edit": api_edit,
+    "curate": api_curate,
+    "restore_release": api_restore_release,
+    "withdraw": api_withdraw,
     "playlists": api_playlists,
     "playlist": api_playlist,
     "playlist_new": api_playlist_new,

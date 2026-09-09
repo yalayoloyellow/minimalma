@@ -218,6 +218,10 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     "submit.fixed": {"en": "Corrected.", "ru": "Исправлено."},
     "submit.mine": {"en": "My submissions", "ru": "Мои заявки"},
+    "submit.unfinished": {
+        "en": "Not finished — no curator has seen these yet",
+        "ru": "Не доделано — куратор этого ещё не видел",
+    },
     "submit.status_pending": {"en": "waiting", "ru": "ждёт"},
     "submit.status_approved": {"en": "published", "ru": "опубликовано"},
     "submit.status_rejected": {"en": "not taken", "ru": "не взято"},
@@ -255,10 +259,6 @@ STRINGS: dict[str, dict[str, str]] = {
     "mod.ask_note": {
         "en": "Send one or two sentences about this track. Listeners see it before they press play.",
         "ru": "Пришлите одно-два предложения о треке. Слушатели видят это до нажатия «играть».",
-    },
-    "mod.ask_edit": {
-        "en": "Send the correction as: <code>Artist — Title</code>",
-        "ru": "Пришлите исправление в виде: <code>Артист — Название</code>",
     },
     "mod.saved": {"en": "Saved.", "ru": "Сохранено."},
     "mod.not_curator": {"en": "That is for curators.", "ru": "Это для кураторов."},
@@ -365,19 +365,10 @@ STRINGS: dict[str, dict[str, str]] = {
     "mod.release": {"en": "Release", "ru": "Релиз"},
     "mod.publish_release": {"en": "Publish the release", "ru": "Опубликовать релиз"},
     "mod.reject_release": {"en": "Decline the release", "ru": "Отклонить релиз"},
-    "mod.cover": {"en": "Artwork", "ru": "Обложка"},
-    "mod.ask_cover": {
-        "en": "Send an image. It becomes this release's cover.",
-        "ru": "Пришлите картинку. Она станет обложкой этого релиза.",
-    },
-    "mod.no_cover": {
-        "en": "No artwork — a release cannot be published without it.",
-        "ru": "Нет обложки — без неё релиз опубликовать нельзя.",
-    },
-    "mod.no_tracks": {"en": "This release has no tracks.", "ru": "В релизе нет треков."},
+    "mod.no_cover": {"en": "artwork missing", "ru": "нет обложки"},
+    "mod.no_tracks": {"en": "no tracks", "ru": "нет треков"},
     "mod.release_published": {"en": "Release published.", "ru": "Релиз опубликован."},
     "mod.release_rejected": {"en": "Release declined.", "ru": "Релиз отклонён."},
-    "mod.waiting_tracks": {"en": "{n} of {total} waiting", "ru": "ждут {n} из {total}"},
     # ------------------------------------------------------------- digest
     "digest.title": {"en": "This week", "ru": "За неделю"},
     "digest.body": {

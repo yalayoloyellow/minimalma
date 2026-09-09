@@ -248,7 +248,7 @@ def release(db: Database, release_id: int, only_approved: bool = False) -> dict[
     ]
     item["cover_file_id"] = release_cover(db, release_id)
     item["duration"] = sum(int(t["duration"] or 0) for t in item["tracks"])
-    item["blockers"] = release_blockers(db, release_id)
+    item["missing"] = missing_for_release(db, release_id)
     return item
 
 
@@ -259,19 +259,23 @@ def release_of(db: Database, track_id: int) -> dict[str, Any] | None:
     return release(db, int(row["release_id"]))
 
 
-def release_blockers(db: Database, release_id: int) -> list[str]:
-    """What stands between this release and publication.
+def missing_for_release(db: Database, release_id: int) -> list[str]:
+    """What a submission still lacks before a curator should ever see it.
 
-    Artwork is the only hard requirement, and it is deliberately hard: a
-    release without a cover looks broken everywhere it is shown, and the one
-    moment someone will actually fix it is while it is being reviewed.
+    This is a completeness check on the artist's side, not a judgement. A
+    release that fails it never enters the review queue: an incomplete
+    submission is a message to its author, not a decision for a curator.
     """
-    blockers: list[str] = []
-    if not release_cover(db, release_id):
-        blockers.append("no_cover")
+    missing: list[str] = []
     if not db.scalar("SELECT COUNT(*) FROM tracks WHERE release_id=?", (release_id,), default=0):
-        blockers.append("no_tracks")
-    return blockers
+        missing.append("no_tracks")
+    if not release_cover(db, release_id):
+        missing.append("no_cover")
+    return missing
+
+
+def is_complete(db: Database, release_id: int) -> bool:
+    return not missing_for_release(db, release_id)
 
 
 def update_release(db: Database, release_id: int, **fields: Any) -> None:
@@ -286,7 +290,11 @@ def update_release(db: Database, release_id: int, **fields: Any) -> None:
 
 
 def pending_releases(db: Database, limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
-    """The review queue, one row per release rather than per track."""
+    """The review queue: complete submissions only, oldest first.
+
+    Completeness is enforced here rather than at approval time, so a curator
+    never opens something they cannot decide.
+    """
     rows = db.query(
         "SELECT r.*, a.name AS artist, "
         "  (SELECT COUNT(*) FROM tracks t WHERE t.release_id=r.id AND t.status='pending') AS waiting, "
@@ -296,26 +304,72 @@ def pending_releases(db: Database, limit: int = 20, offset: int = 0) -> list[dic
         "WHERE r.status=? AND EXISTS (SELECT 1 FROM tracks t WHERE t.release_id=r.id "
         "                             AND t.status='pending') "
         "ORDER BY first_at ASC LIMIT ? OFFSET ?",
-        (STATUS_PENDING, limit, offset),
+        (STATUS_PENDING, limit * 4, offset),
     )
     out = []
     for row in rows:
+        if not is_complete(db, int(row["id"])):
+            continue
         item = dict(row)
         item["cover_file_id"] = release_cover(db, int(row["id"]))
-        item["blockers"] = release_blockers(db, int(row["id"]))
+        item["tags"] = release_tags(db, int(row["id"]))
         out.append(item)
+        if len(out) >= limit:
+            break
     return out
 
 
 def pending_releases_total(db: Database) -> int:
-    return int(
-        db.scalar(
-            "SELECT COUNT(*) FROM releases r WHERE r.status=? AND EXISTS "
-            "(SELECT 1 FROM tracks t WHERE t.release_id=r.id AND t.status='pending')",
-            (STATUS_PENDING,),
-            default=0,
-        )
+    rows = db.query(
+        "SELECT r.id FROM releases r WHERE r.status=? AND EXISTS "
+        "(SELECT 1 FROM tracks t WHERE t.release_id=r.id AND t.status='pending')",
+        (STATUS_PENDING,),
     )
+    return sum(1 for row in rows if is_complete(db, int(row["id"])))
+
+
+def incomplete_releases(db: Database, user_id: int) -> list[dict[str, Any]]:
+    """An artist's own submissions that are not yet ready to be reviewed."""
+    rows = db.query(
+        "SELECT DISTINCT r.*, a.name AS artist FROM releases r "
+        "JOIN artists a ON a.id = r.artist_id "
+        "JOIN tracks t ON t.release_id = r.id "
+        "WHERE r.status=? AND t.submitted_by=? ORDER BY r.submitted_at DESC LIMIT 20",
+        (STATUS_PENDING, user_id),
+    )
+    out = []
+    for row in rows:
+        missing = missing_for_release(db, int(row["id"]))
+        if missing:
+            out.append({**dict(row), "missing": missing})
+    return out
+
+
+def release_tags(db: Database, release_id: int) -> list[str]:
+    """Tags on a release: the union of what its tracks carry."""
+    rows = db.query(
+        "SELECT DISTINCT g.name FROM track_tags tt "
+        "JOIN tags g ON g.id = tt.tag_id "
+        "JOIN tracks t ON t.id = tt.track_id "
+        "WHERE t.release_id=? ORDER BY g.name",
+        (release_id,),
+    )
+    return [row["name"] for row in rows]
+
+
+def set_release_tags(db: Database, release_id: int, names: Sequence[str]) -> list[str]:
+    """Tag a whole release.
+
+    Tags are the station's vocabulary rather than the artist's — they feed the
+    recommender, and an artist tags for promotion while a curator tags for the
+    shelf. A release is normally one coherent record, so the set applies to
+    every track in it.
+    """
+    applied: list[str] = []
+    for row in db.query("SELECT id FROM tracks WHERE release_id=?", (release_id,)):
+        applied = set_tags(db, int(row["id"]), names)
+        _index(db, int(row["id"]))
+    return applied
 
 
 def approve_release(
@@ -329,9 +383,11 @@ def approve_release(
     item = release(db, release_id)
     if item is None:
         return None, "not_found"
-    blockers = release_blockers(db, release_id)
-    if blockers:
-        return None, blockers[0]
+    missing = missing_for_release(db, release_id)
+    if missing:
+        # Unreachable through any interface — the queue filters these out — but
+        # kept so no caller can publish an unfinished release by accident.
+        return None, missing[0]
 
     stamp = now()
     with db.transaction() as conn:
@@ -364,16 +420,18 @@ def reject_release(
             "published_at=NULL WHERE id=?",
             (STATUS_REJECTED, curator_id, stamp, reason.strip()[:400] or None, release_id),
         )
+        # Every track, not only the waiting ones: a declined release must not
+        # leave published tracks behind it, which would be a state no screen
+        # in the product knows how to describe.
         conn.execute(
             "UPDATE tracks SET status=?, reviewed_by=?, reviewed_at=?, reject_reason=?, "
-            "published_at=NULL WHERE release_id=? AND status=?",
+            "published_at=NULL WHERE release_id=?",
             (
                 STATUS_REJECTED,
                 curator_id,
                 stamp,
                 reason.strip()[:400] or None,
                 release_id,
-                STATUS_PENDING,
             ),
         )
     for track_item in item["tracks"]:
@@ -694,21 +752,6 @@ def _store_cover(
 # --------------------------------------------------------------------------
 
 
-def pending(db: Database, limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
-    rows = db.query(
-        "SELECT t.*, a.name AS artist FROM tracks t JOIN artists a ON a.id = t.artist_id "
-        "WHERE t.status=? ORDER BY t.submitted_at ASC LIMIT ? OFFSET ?",
-        (STATUS_PENDING, limit, offset),
-    )
-    return [dict(row) for row in rows]
-
-
-def pending_total(db: Database) -> int:
-    return int(
-        db.scalar("SELECT COUNT(*) FROM tracks WHERE status=?", (STATUS_PENDING,), default=0)
-    )
-
-
 def track(db: Database, track_id: int) -> dict[str, Any] | None:
     """A track joined with its artist, tags and parsed feature blobs."""
     row = db.one(
@@ -812,77 +855,28 @@ def rename_artist(db: Database, track_id: int, name: str, claimed_by: int | None
     return artist_id
 
 
-def approve(
-    db: Database,
-    track_id: int,
-    curator_id: int,
-    note: str = "",
-    tag_names: Sequence[str] | None = None,
-    require_cover: bool = True,
-) -> dict[str, Any] | None:
-    """Publish one track.
+def restore_release(db: Database, release_id: int) -> dict[str, Any] | None:
+    """Undo a review decision, putting the whole release back in the queue.
 
-    A release is normally accepted whole through :func:`approve_release`; this
-    is the single-track path, used when a curator wants one song out of a
-    submission. It enforces the same artwork requirement, so no track can reach
-    a listener without a cover.
+    Every decision is reversible; that is what makes a fast keyboard workflow
+    safe to offer at all.
     """
-    item = track(db, track_id)
-    if item is None:
+    if release(db, release_id) is None:
         return None
-    if (
-        require_cover
-        and item.get("release_id")
-        and "no_cover" in release_blockers(db, int(item["release_id"]))
-    ):
-        return None
-    if tag_names is not None:
-        set_tags(db, track_id, tag_names)
-    stamp = now()
-    db.execute(
-        "UPDATE tracks SET status=?, reviewed_by=?, reviewed_at=?, published_at=?, "
-        "note=COALESCE(NULLIF(?, ''), note), reject_reason=NULL WHERE id=?",
-        (STATUS_APPROVED, curator_id, stamp, stamp, note.strip(), track_id),
-    )
-    if item.get("release_id"):
-        # A release with a published track is itself published.
-        db.execute(
-            "UPDATE releases SET status=?, reviewed_by=?, reviewed_at=?, "
-            "published_at=COALESCE(published_at, ?) WHERE id=?",
-            (STATUS_APPROVED, curator_id, stamp, stamp, item["release_id"]),
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE releases SET status=?, reviewed_by=NULL, reviewed_at=NULL, "
+            "reject_reason=NULL, published_at=NULL WHERE id=?",
+            (STATUS_PENDING, release_id),
         )
-    _index(db, track_id)
-    return track(db, track_id)
-
-
-def reject(db: Database, track_id: int, curator_id: int, reason: str = "") -> dict[str, Any] | None:
-    item = track(db, track_id)
-    if item is None:
-        return None
-    db.execute(
-        "UPDATE tracks SET status=?, reviewed_by=?, reviewed_at=?, reject_reason=?, "
-        "published_at=NULL WHERE id=?",
-        (STATUS_REJECTED, curator_id, now(), reason.strip()[:400] or None, track_id),
-    )
-    search.remove_track(db, track_id)
-    return track(db, track_id)
-
-
-def restore_to_queue(db: Database, track_id: int) -> dict[str, Any] | None:
-    """Undo a review decision, putting the track back in the queue.
-
-    Every moderation action is reversible; that is what makes a fast keyboard
-    workflow safe to offer at all.
-    """
-    if track(db, track_id) is None:
-        return None
-    db.execute(
-        "UPDATE tracks SET status=?, reviewed_by=NULL, reviewed_at=NULL, "
-        "reject_reason=NULL, published_at=NULL WHERE id=?",
-        (STATUS_PENDING, track_id),
-    )
-    search.remove_track(db, track_id)
-    return track(db, track_id)
+        conn.execute(
+            "UPDATE tracks SET status=?, reviewed_by=NULL, reviewed_at=NULL, "
+            "reject_reason=NULL, published_at=NULL WHERE release_id=?",
+            (STATUS_PENDING, release_id),
+        )
+    for row in db.query("SELECT id FROM tracks WHERE release_id=?", (release_id,)):
+        search.remove_track(db, int(row["id"]))
+    return release(db, release_id)
 
 
 def hide(db: Database, track_id: int, curator_id: int) -> None:
@@ -1081,7 +1075,7 @@ def artist_stats(db: Database, artist_id: int) -> dict[str, int]:
 def curator_report(db: Database, days: int = 7) -> dict[str, Any]:
     since = now() - days * 86400
     return {
-        "pending": pending_total(db),
+        "pending": pending_releases_total(db),
         "approved": int(
             db.scalar(
                 "SELECT COUNT(*) FROM tracks WHERE status='approved' AND reviewed_at>=?",
@@ -1107,6 +1101,15 @@ def curator_report(db: Database, days: int = 7) -> dict[str, Any]:
         "likes": int(
             db.scalar(
                 "SELECT COUNT(*) FROM events WHERE kind='like' AND ts>=?", (since,), default=0
+            )
+        ),
+        "incomplete": int(
+            db.scalar(
+                "SELECT COUNT(*) FROM releases WHERE status='pending' "
+                "AND (cover_file_id IS NULL AND NOT EXISTS "
+                "  (SELECT 1 FROM tracks t WHERE t.release_id=releases.id "
+                "   AND t.cover_file_id IS NOT NULL))",
+                default=0,
             )
         ),
         "unheard": int(

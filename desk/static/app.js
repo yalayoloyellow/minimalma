@@ -202,7 +202,7 @@ function releaseRow(item, selected) {
       <div class="t">${esc(item.title)}</div>
       <div class="a">${esc(item.artist)} · ${esc(bits.join(" · "))}</div>
     </div>
-    <div class="d">${(item.blockers && item.blockers.length) ? `<span class="flag">!</span>` : ""}</div>
+    <div class="d">${item.total || ""}</div>
   </div>`;
 }
 
@@ -229,26 +229,11 @@ function viewQueue() {
     </div>`;
 }
 
-function coverHtml(release) {
-  const src = release.tracks && release.tracks.length && release.has_cover
-    ? media("cover", release.tracks[0].id)
-    : "";
-  return `<div class="coverbox ${src ? "" : "missing"}" data-coverdrop="${release.id}">
-    ${src ? `<img class="cover-large" src="${src}" alt="">` : ""}
-    <span class="coverhint" ${src ? "hidden" : ""}>${esc(t("drop_cover"))}</span>
-    <input type="file" accept="image/*" data-coverinput hidden>
-  </div>`;
-}
-
 function releaseCard(release, queued) {
   const bits = [kindLabel(release.kind)];
   if (release.year) bits.push(release.year);
   if (release.duration) bits.push(hms(release.duration));
   bits.push(t("status")[release.status] || release.status);
-
-  const blockers = (release.blockers || []).map(
-    (b) => `<div class="blocker">${esc(t(b === "no_cover" ? "no_cover" : "no_tracks"))}</div>`
-  ).join("");
 
   const tracks = (release.tracks || []).map((track) => `
     <div class="tk" data-tk="${track.id}">
@@ -261,25 +246,28 @@ function releaseCard(release, queued) {
     </div>`).join("");
 
   const actions = queued
-    ? `<button class="btn primary" data-act="approve_release" ${release.blockers.length ? "disabled" : ""}>${esc(t("publish"))}</button>
+    ? `<button class="btn primary" data-act="approve_release">${esc(t("publish"))}</button>
        <button class="btn danger" data-act="reject_release">${esc(t("decline"))}</button>
        <button class="btn" data-act="save_release">${esc(t("save"))}</button>`
     : `<button class="btn" data-act="save_release">${esc(t("save"))}</button>`;
 
   return `<div class="card" data-release-card="${release.id}">
-    ${coverHtml(release)}
     <h2>${esc(release.title)}</h2>
     <div class="by">${esc(release.artist)}</div>
     <div class="meta">${esc(bits.join(" · "))}</div>
-    ${blockers}
 
     <div class="section"><label>${esc(t("note"))}</label>
       <textarea rows="3" data-rnote placeholder="${esc(t("note_ph"))}">${esc(release.note)}</textarea>
     </div>
 
-    <div class="section"><label>${esc(t("metadata"))}</label>
-      <div class="field"><span>${esc(t("album"))}</span><input type="text" data-rf="title" value="${esc(release.title)}"></div>
-      <div class="field"><span>${esc(t("year"))}</span><input type="text" data-rf="year" value="${esc(release.year || "")}"></div>
+    <div class="section"><label>${esc(t("tags"))}</label>
+      <div class="tags">${S.draftTags.map((tag) =>
+        `<span class="tag" data-untag="${esc(tag)}">${esc(tag)} ×</span>`).join("")
+        || `<span class="muted-dash">—</span>`}</div>
+      <input type="text" data-newtag placeholder="${esc(t("add_tag"))}">
+      <div class="tags" style="margin-top:8px">${((S.state && S.state.tags) || [])
+        .filter((tag) => !S.draftTags.includes(tag)).slice(0, 14)
+        .map((tag) => `<span class="tag pick" data-tag="${esc(tag)}">${esc(tag)}</span>`).join("")}</div>
     </div>
 
     <div class="section"><label>${esc(t("tracks"))} · ${(release.tracks || []).length}</label>
@@ -313,33 +301,20 @@ function viewCatalogue() {
 }
 
 function trackCard(track) {
-  const chips = S.draftTags.map((tag) =>
-    `<span class="tag" data-untag="${esc(tag)}">${esc(tag)} ×</span>`).join("");
-  const suggested = ((S.state && S.state.tags) || [])
-    .filter((tag) => !S.draftTags.includes(tag)).slice(0, 14)
-    .map((tag) => `<span class="tag pick" data-tag="${esc(tag)}">${esc(tag)}</span>`).join("");
   return `<div class="card" data-card="${track.id}">
     <h2>${esc(track.title)}</h2>
     <div class="by">${esc(track.artist)} · ${hms(track.duration)}</div>
-    <div class="meta">${esc([track.album, track.year].filter(Boolean).join(" · "))}</div>
+    <div class="meta">${esc([track.release_title, track.year].filter(Boolean).join(" · "))}</div>
     <div class="meta">${track.plays} ${esc(t("plays"))} · ${track.likes} ${esc(t("saves"))} · ${track.exposures} ${esc(t("shown"))}</div>
     <audio controls preload="none" src="${media("audio", track.id)}"></audio>
-
     <div class="section"><label>${esc(t("tags"))}</label>
-      <div class="tags">${chips || `<span class="muted-dash">—</span>`}</div>
-      <input type="text" data-newtag placeholder="${esc(t("add_tag"))}">
-      <div class="tags" style="margin-top:8px">${suggested}</div>
+      <div class="tags">${(track.tags || []).map((tag) => `<span class="tag">${esc(tag)}</span>`).join("")
+        || `<span class="muted-dash">—</span>`}</div>
     </div>
-    <div class="section"><label>${esc(t("note"))}</label>
-      <textarea rows="3" data-note placeholder="${esc(t("note_ph"))}">${esc(track.note)}</textarea>
-    </div>
-    <div class="section"><label>${esc(t("metadata"))}</label>
-      <div class="field"><span>${esc(t("title"))}</span><input type="text" data-f="title" value="${esc(track.title)}"></div>
-      <div class="field"><span>${esc(t("artist"))}</span><input type="text" data-f="artist" value="${esc(track.artist)}"></div>
-    </div>
+    ${(track.note || "").trim() ? `<div class="section"><label>${esc(t("note"))}</label>
+      <div class="note">${esc(track.note)}</div></div>` : ""}
     <div class="actions">
-      <button class="btn" data-act="save">${esc(t("save"))}</button>
-      ${track.status === "approved" ? `<button class="btn danger" data-act="hide">${esc(t("withdraw"))}</button>` : ""}
+      ${track.status === "approved" ? `<button class="btn danger" data-act="withdraw">${esc(t("withdraw"))}</button>` : ""}
     </div>
   </div>`;
 }
@@ -434,6 +409,7 @@ async function loadQueue() {
 
 async function selectRelease(id, redraw = true) {
   S.release = await api(`/api/release/${id}`);
+  S.draftTags = (S.release.tags || []).slice();
   if (redraw) render();
 }
 
@@ -452,7 +428,6 @@ async function loadPlaylists() {
 
 async function selectTrack(id, redraw = true) {
   S.track = await api(`/api/track/${id}`);
-  S.draftTags = (S.track.tags || []).slice();
   if (redraw) render();
 }
 
@@ -482,13 +457,10 @@ function fieldValue(selector) {
 
 async function saveRelease(silent) {
   if (!S.release) return;
-  const payload = {
-    title: fieldValue('[data-rf="title"]'),
-    note: fieldValue("[data-rnote]")
-  };
-  const year = fieldValue('[data-rf="year"]');
-  if (year) payload.year = year;
-  const result = await api(`/api/edit_release/${S.release.id}`, payload);
+  const result = await api(`/api/curate/${S.release.id}`, {
+    note: fieldValue("[data-rnote]"),
+    tags: S.draftTags.slice()
+  });
   if (result.release) S.release = result.release;
   if (!silent) toast(t("saved"));
 }
@@ -537,10 +509,7 @@ function offerUndo(release, message) {
      the reason a fast workflow is safe to hand someone. */
   toast(message, t("undo"), async () => {
     try {
-      for (const track of release.tracks || []) {
-        await api(`/api/restore/${track.id}`, {});
-      }
-      await api(`/api/edit_release/${release.id}`, {});
+      await api(`/api/restore_release/${release.id}`, {});
       await refreshState();
       await loadQueue();
       toast(t("restored"));
@@ -555,20 +524,10 @@ async function actTrack(action) {
   if (S.busy || !S.track) return;
   S.busy = true;
   try {
-    if (action === "save") {
-      const payload = {
-        title: fieldValue('[data-f="title"]'),
-        note: fieldValue("[data-note]"),
-        tags: S.draftTags.slice()
-      };
-      const artist = fieldValue('[data-f="artist"]');
-      if (artist && artist !== S.track.artist) payload.artist = artist;
-      const result = await api(`/api/edit/${S.track.id}`, payload);
-      if (result.track) S.track = result.track;
-      toast(t("saved"));
-    } else if (action === "hide") {
-      await api(`/api/hide/${S.track.id}`, {});
+    if (action === "withdraw") {
+      await api(`/api/withdraw/${S.track.id}`, {});
       toast(t("hidden"));
+      S.track = null;
       await loadCatalogue();
     }
   } catch (error) {
@@ -576,31 +535,6 @@ async function actTrack(action) {
   }
   S.busy = false;
   render();
-}
-
-async function uploadCover(releaseId, file) {
-  if (!file) return;
-  if (file.size > 3 * 1024 * 1024) {
-    toast(t("failed") + ": > 3 MB");
-    return;
-  }
-  const buffer = await file.arrayBuffer();
-  let binary = "";
-  const bytes = new Uint8Array(buffer);
-  for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
-  try {
-    const result = await api(`/api/setcover/${releaseId}`, { data: btoa(binary) });
-    if (!result.ok) {
-      toast(t("failed") + ": " + (result.error || ""));
-      return;
-    }
-    S.release = result.release;
-    await loadQueue();
-    toast(t("saved"));
-    render();
-  } catch (error) {
-    toast(error.message);
-  }
 }
 
 function move(delta) {
@@ -620,53 +554,17 @@ function move(delta) {
 
 /* ---------------------------------------------------------------- events */
 
-/* A stored cover id can outlive the file Telegram holds. Showing the drop
-   placeholder is better than a broken image, and the capture phase is required
-   because image load errors do not bubble. */
-document.addEventListener("error", (event) => {
-  const image = event.target;
-  if (!(image instanceof HTMLImageElement) || !image.matches(".cover-large")) return;
-  const box = image.closest(".coverbox");
-  image.remove();
-  if (box) {
-    box.classList.add("missing");
-    const hint = box.querySelector(".coverhint");
-    if (hint) hint.hidden = false;
-  }
-}, true);
-
-document.addEventListener("change", (event) => {
-  if (event.target.matches("[data-coverinput]")) {
-    const box = event.target.closest("[data-coverdrop]");
-    uploadCover(Number(box.dataset.coverdrop), event.target.files[0]);
-  }
-});
-
-document.addEventListener("dragover", (event) => {
-  if (event.target.closest("[data-coverdrop]")) event.preventDefault();
-});
-
-document.addEventListener("drop", (event) => {
-  const box = event.target.closest("[data-coverdrop]");
-  if (!box) return;
-  event.preventDefault();
-  uploadCover(Number(box.dataset.coverdrop), event.dataTransfer.files[0]);
-});
-
 document.addEventListener("click", async (event) => {
   const target = event.target.closest(
     "[data-view],[data-release],[data-track],[data-artist],[data-playlist]," +
     "[data-act],[data-tag],[data-untag],[data-bot],[data-status],[data-listdel]," +
-    "[data-listpub],[data-coverdrop]"
+    "[data-listpub]"
   );
   if (!target) return;
   try {
     if (target.dataset.view !== undefined) return void go(target.dataset.view);
     if (target.dataset.release) return void selectRelease(Number(target.dataset.release));
     if (target.dataset.track) return void selectTrack(Number(target.dataset.track));
-    if (target.dataset.coverdrop && !event.target.matches("[data-coverinput]")) {
-      return void target.querySelector("[data-coverinput]").click();
-    }
     if (target.dataset.bot) {
       S.state.bot = await api(`/api/bot/${target.dataset.bot}`, {});
       return void render();
@@ -711,7 +609,7 @@ document.addEventListener("click", async (event) => {
       await loadPlaylists();
       return void render();
     }
-    if (act === "save" || act === "hide") return void actTrack(act);
+    if (act === "withdraw") return void actTrack(act);
     if (act) return void actRelease(act);
   } catch (error) {
     toast(error.message);

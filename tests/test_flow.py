@@ -202,22 +202,25 @@ class TestSubmission:
 
 
 class TestModeration:
+    """A release is accepted or declined whole; a curator writes tags and a note."""
+
     def _submit(self, bot: handlers.Bot, unique: str = "m1") -> int:
-        # thumbnail=True gives the release a cover, which publication requires.
+        # thumbnail=True supplies artwork, without which nothing reaches the queue.
         bot.handle(
             fake.audio_message(
                 ARTIST, f"file-{unique}", unique, title="Queued", performer="A", thumbnail=True
             )
         )
-        return int(bot.db.scalar("SELECT id FROM tracks WHERE file_unique_id=?", (unique,)))
+        track_id = int(bot.db.scalar("SELECT id FROM tracks WHERE file_unique_id=?", (unique,)))
+        return int(bot.db.scalar("SELECT release_id FROM tracks WHERE id=?", (track_id,)))
 
     def test_approval_publishes_and_notifies(
         self, bot: handlers.Bot, api: FakeApi, db: Database
     ) -> None:
-        track_id = self._submit(bot)
+        release_id = self._submit(bot)
         api.clear()
-        bot.handle(fake.callback(CURATOR, f"mod|ok|{track_id}"))
-        assert db.scalar("SELECT status FROM tracks WHERE id=?", (track_id,)) == "approved"
+        bot.handle(fake.callback(CURATOR, f"rel|ok|{release_id}"))
+        assert db.scalar("SELECT status FROM releases WHERE id=?", (release_id,)) == "approved"
         notices = [p for p in api.of("sendMessage") if p["chat_id"] == ARTIST]
         assert notices and "Published" in notices[0]["text"]
         assert search.search(db, "Queued")
@@ -225,37 +228,53 @@ class TestModeration:
     def test_rejection_asks_for_a_reason_and_passes_it_on(
         self, bot: handlers.Bot, api: FakeApi, db: Database
     ) -> None:
-        track_id = self._submit(bot, "m2")
-        bot.handle(fake.callback(CURATOR, f"mod|no|{track_id}"))
+        release_id = self._submit(bot, "m2")
+        bot.handle(fake.callback(CURATOR, f"rel|no|{release_id}"))
         assert "reason" in api.last_screen().lower()
         api.clear()
         bot.handle(fake.message(CURATOR, "The mix is unfinished."))
-        assert db.scalar("SELECT status FROM tracks WHERE id=?", (track_id,)) == "rejected"
+        assert db.scalar("SELECT status FROM releases WHERE id=?", (release_id,)) == "rejected"
         notices = [p for p in api.of("sendMessage") if p["chat_id"] == ARTIST]
         assert notices and "unfinished" in notices[0]["text"]
 
     def test_rejection_can_skip_the_reason(self, bot: handlers.Bot, db: Database) -> None:
-        track_id = self._submit(bot, "m3")
-        bot.handle(fake.callback(CURATOR, f"mod|no|{track_id}"))
-        bot.handle(fake.callback(CURATOR, f"mod|no0|{track_id}"))
-        assert db.scalar("SELECT status FROM tracks WHERE id=?", (track_id,)) == "rejected"
+        release_id = self._submit(bot, "m3")
+        bot.handle(fake.callback(CURATOR, f"rel|no|{release_id}"))
+        bot.handle(fake.callback(CURATOR, f"rel|no0|{release_id}"))
+        assert db.scalar("SELECT status FROM releases WHERE id=?", (release_id,)) == "rejected"
 
     def test_tags_and_notes_are_stored(self, bot: handlers.Bot, db: Database) -> None:
-        track_id = self._submit(bot, "m4")
-        bot.handle(fake.callback(CURATOR, f"mod|tag|{track_id}"))
+        release_id = self._submit(bot, "m4")
+        bot.handle(fake.callback(CURATOR, f"rel|tag|{release_id}"))
         bot.handle(fake.message(CURATOR, "Ambient, Field Recording, #tape"))
-        bot.handle(fake.callback(CURATOR, f"mod|note|{track_id}"))
+        bot.handle(fake.callback(CURATOR, f"rel|note|{release_id}"))
         bot.handle(fake.message(CURATOR, "Recorded on a stairwell landing."))
-        assert catalog.tags_of(db, track_id) == ["ambient", "field recording", "tape"]
-        assert "stairwell" in db.scalar("SELECT note FROM tracks WHERE id=?", (track_id,))
+        assert catalog.release_tags(db, release_id) == ["ambient", "field recording", "tape"]
+        assert "stairwell" in db.scalar("SELECT note FROM releases WHERE id=?", (release_id,))
+
+    def test_a_curator_cannot_rewrite_someone_elses_release(
+        self, bot: handlers.Bot, api: FakeApi, db: Database
+    ) -> None:
+        """Title, artist and artwork belong to whoever made the record."""
+        release_id = self._submit(bot, "m5")
+        before = db.one("SELECT title, cover_file_id FROM releases WHERE id=?", (release_id,))
+        api.clear()
+        bot.handle(fake.callback(CURATOR, f"rel|cov|{release_id}"))
+        photo = fake.message(CURATOR, "")
+        photo["message"].pop("text")
+        photo["message"]["photo"] = [{"file_id": "curator:art", "width": 900, "height": 900}]
+        bot.handle(photo)
+        after = db.one("SELECT title, cover_file_id FROM releases WHERE id=?", (release_id,))
+        assert after["cover_file_id"] == before["cover_file_id"]
+        assert after["title"] == before["title"]
 
     def test_a_listener_cannot_moderate(
         self, bot: handlers.Bot, api: FakeApi, db: Database
     ) -> None:
-        track_id = self._submit(bot, "m5")
+        release_id = self._submit(bot, "m6")
         api.clear()
-        bot.handle(fake.callback(LISTENER, f"mod|ok|{track_id}"))
-        assert db.scalar("SELECT status FROM tracks WHERE id=?", (track_id,)) == "pending"
+        bot.handle(fake.callback(LISTENER, f"rel|ok|{release_id}"))
+        assert db.scalar("SELECT status FROM releases WHERE id=?", (release_id,)) == "pending"
         assert api.of("answerCallbackQuery")[0]["text"]
 
     def test_a_listener_cannot_see_the_queue(self, bot: handlers.Bot, api: FakeApi) -> None:
@@ -263,7 +282,7 @@ class TestModeration:
         assert "curators" in api.texts[-1]
 
     def test_nothing_is_published_without_a_curator(self, bot: handlers.Bot, db: Database) -> None:
-        self._submit(bot, "m6")
+        self._submit(bot, "m7")
         assert db.scalar("SELECT COUNT(*) FROM tracks WHERE status='approved'", default=0) == 0
 
 

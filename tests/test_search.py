@@ -70,9 +70,12 @@ def test_tracks_by_tag(db: Database, seeded: list[int]) -> None:
     assert titles == {"Группа крови", "Drift", "Basement"}
 
 
-def test_rejecting_a_track_removes_it_from_search(db: Database, seeded: list[int]) -> None:
+def test_declining_a_release_removes_its_tracks_from_search(
+    db: Database, seeded: list[int]
+) -> None:
     assert search.search(db, "Nightpost")
-    catalog.reject(db, seeded[0], 1, "not this time")
+    release_id = int(db.scalar("SELECT release_id FROM tracks WHERE id=?", (seeded[0],)))
+    catalog.reject_release(db, release_id, 1, "not this time")
     assert "Nightpost" not in _titles(db, search.search(db, "Nightpost"))
 
 

@@ -376,3 +376,48 @@ irreversible-looking action and immediately moves on is a footgun. Publishing is
 `⌘↵`, declining is `⌘⌫`, and both offer an undo afterwards — which is the real
 fix, because a reversible decision is what makes a fast workflow safe to offer
 at all.
+
+---
+
+## 15. Who owns what
+
+One rule settles most of the interface:
+
+> The release belongs to the artist. The shelf belongs to the curator.
+
+The artist owns what the record *is* — title, artwork, running order. The
+curator owns whether it is on the shelf and how it is labelled — publish or
+decline, tags, note. Neither reaches into the other's half.
+
+An earlier version got this wrong. A curator could rewrite titles, rename
+artists and drag artwork onto a release, and a release missing its cover sat in
+the queue behind a red banner. Both are the same mistake: work that is not
+curation, handed to the person whose only job is to decide.
+
+Two consequences follow, and they are the load-bearing ones:
+
+**An incomplete submission never enters the queue.** `missing_for_release()` is
+a completeness check on the artist's side, not a judgement, and
+`pending_releases()` filters on it. A queue should contain only things that can
+be decided; a release with no artwork is a message to its author. The artist is
+told exactly what is missing on the Submit screen, and the moment the picture
+arrives the release joins the queue — which is also the first time any curator
+hears about it. `_notify_curators` is gated on the same check, so an unfinished
+record produces no notification at all.
+
+**A curator writes two fields.** Tags and the note. Tags stay with the curator
+because they are the station's vocabulary and they feed the recommender: an
+artist tags for promotion, a curator tags for the shelf, and handing the
+vocabulary to the artist means the ranking starts believing their marketing.
+The note is the curator's voice — the one thing a listener reads before pressing
+play, and the whole difference between this and an upload folder. Tags are set
+on the release and fan out to its tracks, because a curator thinks "this is an
+ambient record", not track by track.
+
+The desk API expresses the boundary directly: there is one write endpoint,
+`curate`, it accepts `{tags, note}`, and there is a test asserting that no
+endpoint for renaming a release or uploading its cover exists at all.
+
+Declining a release takes down every track in it, not only the waiting ones —
+otherwise a declined release could leave published tracks behind, a state no
+screen in the product knows how to describe.

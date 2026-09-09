@@ -169,9 +169,9 @@ class TestOnlySolicitedMessages:
         bot.handle(
             fake.audio_message(ARTIST, "z1", "zz1", title="Mine", performer="A", thumbnail=True)
         )
-        track_id = int(db.scalar("SELECT id FROM tracks WHERE file_unique_id='zz1'"))
+        release_id = int(db.scalar("SELECT release_id FROM tracks WHERE file_unique_id='zz1'"))
         api.clear()
-        bot.handle(fake.callback(CURATOR, f"mod|ok|{track_id}"))
+        bot.handle(fake.callback(CURATOR, f"rel|ok|{release_id}"))
         recipients = {p["chat_id"] for p in api.of("sendMessage")}
         # Publishing reaches the artist who submitted it and nobody else.
         assert LISTENER not in recipients

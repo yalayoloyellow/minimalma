@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Roles are separated.** The release belongs to the artist — title, artwork,
+  running order — and the shelf belongs to the curator: publish or decline,
+  tags, note. A curator can no longer rename a release or supply its cover;
+  a wrong title is grounds to decline with a reason.
+- **An incomplete submission never enters the queue.** A release with no artwork
+  sits as the artist's draft, produces no curator notification, and joins the
+  queue the moment the picture arrives. The Submit screen tells the artist
+  exactly what is missing.
+- Tags are set on a release and applied to its tracks; the curator's note lives
+  on the release.
+- Declining a release now takes down every track in it, not only the waiting
+  ones, which removes a state where a declined release kept published tracks.
+- Single-track moderation is gone; a release is accepted or declined whole.
+  `catalog.approve`/`reject` are replaced by `approve_release`/`reject_release`,
+  and `restore_release` replaces the per-track undo.
+- The desk's write surface is one endpoint, `curate`, accepting `{tags, note}`.
+  `setcover`, `edit`, `edit_release`, `approve` and `reject` are removed.
+
 ### Removed
 
 - **Quality flags.** The review card no longer grades a submission — no bitrate

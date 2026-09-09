@@ -279,37 +279,23 @@ class Bot:
             self._set_state(user_id)
             return
 
-        if kind == "relreason" and track_id:
+        # A curator writes exactly two things: the tags and the note. Titles,
+        # artwork and track order belong to whoever made the record.
+        release_id = track_id
+        if kind == "relreason" and release_id:
             self._set_state(user_id)
-            self._finish_release_rejection(chat_id, user, track_id, text)
-            return
-        if kind == "relnote" and track_id:
+            self._finish_release_rejection(chat_id, user, release_id, text)
+        elif kind == "relnote" and release_id:
             self._set_state(user_id)
-            catalog.update_release(self.db, track_id, note=text.strip()[:600])
+            catalog.update_release(self.db, release_id, note=text.strip()[:600])
             self.api.send_message(chat_id, t(lang, "mod.saved"))
-            self._render_release_review(chat_id, user, track_id)
-            return
-
-        if kind == "modreason" and track_id:
+            self._render_release_review(chat_id, user, release_id)
+        elif kind == "reltags" and release_id:
             self._set_state(user_id)
-            self._finish_rejection(chat_id, user, track_id, text)
-        elif kind == "modtags" and track_id:
-            self._set_state(user_id)
-            catalog.set_tags(self.db, track_id, list(text.replace("\n", ",").split(",")))
+            catalog.set_release_tags(self.db, release_id, list(text.replace("\n", ",").split(",")))
             self.engine.invalidate()
             self.api.send_message(chat_id, t(lang, "mod.saved"))
-            self._render_review(chat_id, user, track_id)
-        elif kind == "modnote" and track_id:
-            self._set_state(user_id)
-            catalog.update_track(self.db, track_id, note=text.strip()[:600])
-            self.api.send_message(chat_id, t(lang, "mod.saved"))
-            self._render_review(chat_id, user, track_id)
-        elif kind == "moded" and track_id:
-            self._set_state(user_id)
-            self._apply_correction(track_id, text, None)
-            self.engine.invalidate()
-            self.api.send_message(chat_id, t(lang, "mod.saved"))
-            self._render_review(chat_id, user, track_id)
+            self._render_release_review(chat_id, user, release_id)
         else:
             self._set_state(user_id)
 
@@ -391,7 +377,11 @@ class Bot:
 
         # One card per release, not one per track: a ten-track album should not
         # produce ten notifications.
-        if (result.track_no or 1) == 1 and result.release_id:
+        if (
+            (result.track_no or 1) == 1
+            and result.release_id
+            and catalog.is_complete(self.db, result.release_id)
+        ):
             self._notify_curators(result.release_id)
 
     def _notify_curators(self, release_id: int) -> None:
@@ -611,17 +601,6 @@ class Bot:
                     ),
                 )
 
-        elif action == "review" and args:
-            ack()
-            if self.config.is_curator(user_id):
-                self._render_review(chat_id, user, int(args[0]))
-
-        elif action == "mod" and len(args) >= 2:
-            if not self.config.is_curator(user_id):
-                ack(t(lang, "mod.not_curator"), alert=True)
-                return
-            self._moderate(chat_id, user, ack, args[0], int(args[1]), message)
-
         else:
             ack(t(lang, "common.stale"))
 
@@ -732,7 +711,7 @@ class Bot:
                 max(0, len(ids) - played),
                 len(ids),
                 self.config.is_curator(user_id),
-                catalog.pending_total(self.db) if self.config.is_curator(user_id) else 0,
+                catalog.pending_releases_total(self.db) if self.config.is_curator(user_id) else 0,
             ),
             fresh=fresh,
         )
@@ -971,7 +950,12 @@ class Bot:
         self.show(
             chat_id,
             user,
-            ui.submit_screen(lang, mine, max(0, self.config.limits.submissions_per_day - used)),
+            ui.submit_screen(
+                lang,
+                mine,
+                max(0, self.config.limits.submissions_per_day - used),
+                catalog.incomplete_releases(self.db, user_id),
+            ),
         )
 
     def _render_stats(self, chat_id: int, user: dict[str, Any]) -> None:
@@ -1112,14 +1096,14 @@ class Bot:
             self._set_state(user_id)
             ack(t(lang, "mod.release_rejected"))
             self._finish_release_rejection(chat_id, user, release_id, "")
-        elif verb == "cov":
-            self._set_state(user_id, f"relcover:{release_id}")
-            ack()
-            self.show(chat_id, user, ui.prompt(lang, t(lang, "mod.ask_cover"), cancel_to="queue"))
         elif verb == "note":
             self._set_state(user_id, f"relnote:{release_id}")
             ack()
             self.show(chat_id, user, ui.prompt(lang, t(lang, "mod.ask_note"), cancel_to="queue"))
+        elif verb == "tag":
+            self._set_state(user_id, f"reltags:{release_id}")
+            ack()
+            self.show(chat_id, user, ui.prompt(lang, t(lang, "mod.ask_tags"), cancel_to="queue"))
 
     def _finish_release_rejection(
         self, chat_id: int, user: dict[str, Any], release_id: int, reason: str
@@ -1135,20 +1119,22 @@ class Bot:
         self._render_queue(chat_id, user)
 
     def _on_photo(self, chat_id: int, user: dict[str, Any], message: dict[str, Any]) -> None:
-        """A picture is only ever meaningful as artwork, and only when asked for."""
+        """Artwork, and only from the person whose release it is.
+
+        A curator cannot supply a cover. It is the artist's record; if it
+        arrives unfinished, that is a message to its author, not a job for the
+        person deciding whether to publish it.
+        """
         lang = self._lang(user)
         user_id = int(user["id"])
         state = user.get("state") or ""
         kind, _, argument = state.partition(":")
-        if kind not in ("relcover", "covr") or not argument.isdigit():
+        if kind != "covr" or not argument.isdigit():
             return
         release_id = int(argument)
-        if kind == "relcover" and not self.config.is_curator(user_id):
+        owner = self.db.scalar("SELECT submitted_by FROM releases WHERE id=?", (release_id,))
+        if owner is not None and int(owner) != user_id:
             return
-        if kind == "covr":
-            owner = self.db.scalar("SELECT submitted_by FROM releases WHERE id=?", (release_id,))
-            if owner is not None and int(owner) != user_id:
-                return
 
         file_id = _largest_photo(message)
         if not file_id:
@@ -1157,102 +1143,37 @@ class Bot:
         catalog.set_release_cover(self.db, release_id, file_id)
         self._set_state(user_id)
         self.api.send_message(chat_id, t(lang, "cover.saved"))
-        if self.config.is_curator(user_id):
-            self._render_release_review(chat_id, user, release_id)
-        else:
-            self._render_submit(chat_id, user)
-
-    def _render_review(self, chat_id: int, user: dict[str, Any], track_id: int) -> None:
-        lang = self._lang(user)
-        item = catalog.track(self.db, track_id)
-        if item is None:
-            self._render_queue(chat_id, user)
-            return
-        self.api.send_audio(
-            chat_id,
-            item["file_id"],
-            caption=ui.review_caption(lang, item),
-            reply_markup=ui.review_buttons(lang, track_id),
-            title=item["title"],
-            performer=item["artist"],
-            duration=item["duration"] or None,
-            disable_notification=True,
-        )
-
-    def _moderate(
-        self,
-        chat_id: int,
-        user: dict[str, Any],
-        ack,
-        verb: str,
-        track_id: int,
-        message: dict[str, Any],
-    ) -> None:
-        lang = self._lang(user)
-        user_id = int(user["id"])
-        if verb == "ok":
-            item = catalog.approve(self.db, track_id, user_id)
-            self.engine.invalidate()
-            ack(t(lang, "mod.approved"))
-            if message.get("message_id"):
-                self.api.edit_markup(chat_id, int(message["message_id"]), None)
-            if item:
-                self._notify_artist(item, approved=True)
-            self._render_queue(chat_id, user)
-        elif verb == "no":
-            self._set_state(user_id, f"modreason:{track_id}")
-            ack()
-            self.show(
-                chat_id,
-                user,
-                ui.Screen(
-                    t(lang, "mod.ask_reason"),
-                    ui.keyboard(
-                        [ui.button(t(lang, "common.skip"), pack("mod", "no0", track_id))],
-                        [ui.button(t(lang, "common.cancel"), pack("nav", "queue"))],
-                    ),
-                ),
-            )
-        elif verb == "no0":
-            self._set_state(user_id)
-            ack(t(lang, "mod.rejected"))
-            self._finish_rejection(chat_id, user, track_id, "")
-        elif verb in ("tag", "note", "ed"):
-            key = {"tag": "modtags", "note": "modnote", "ed": "moded"}[verb]
-            prompt_key = {"tag": "mod.ask_tags", "note": "mod.ask_note", "ed": "mod.ask_edit"}[verb]
-            self._set_state(user_id, f"{key}:{track_id}")
-            ack()
-            self.show(chat_id, user, ui.prompt(lang, t(lang, prompt_key), cancel_to="queue"))
-
-    def _finish_rejection(
-        self, chat_id: int, user: dict[str, Any], track_id: int, reason: str
-    ) -> None:
-        lang = self._lang(user)
-        item = catalog.reject(self.db, track_id, int(user["id"]), reason)
-        self.engine.invalidate()
-        if item:
-            self._notify_artist(item, approved=False)
-        self.api.send_message(chat_id, t(lang, "mod.rejected"))
-        self._render_queue(chat_id, user)
+        # Artwork was the last thing missing, so the release joins the queue
+        # now — and this is the moment the curators hear about it at all.
+        if catalog.is_complete(self.db, release_id):
+            self._notify_curators(release_id)
+        self._render_submit(chat_id, user)
 
     def _notify_artist(self, item: dict[str, Any], approved: bool) -> None:
         """The one message this service sends without being asked.
 
         An artist who submitted work is owed an answer; that is a reply, not a
         notification, and it is the only unsolicited message in the product.
+        One message per release, naming the release rather than a track inside
+        it — that is what the artist submitted.
         """
         target = item.get("submitted_by")
         if not target:
             return
         row = catalog.get_user(self.db, int(target))
         lang = normalise((row or {}).get("lang") or self.config.lang)
+        name = item.get("release_title") or item.get("title") or ""
         if approved:
-            text = t(lang, "submit.approved_notice", title=ui.esc(item["title"]))
+            text = t(lang, "submit.approved_notice", title=ui.esc(name))
             markup = ui.keyboard(
-                [ui.button(t(lang, "track.artist"), pack("artist", item["artist_id"]))]
+                [
+                    ui.button(t(lang, "release.open"), pack("rl", item["release_id"]))
+                    if item.get("release_id")
+                    else ui.button(t(lang, "track.artist"), pack("artist", item["artist_id"]))
+                ]
             )
         else:
-            text = t(lang, "submit.rejected_notice", title=ui.esc(item["title"]))
+            text = t(lang, "submit.rejected_notice", title=ui.esc(name))
             if item.get("reject_reason"):
                 text += "\n" + t(
                     lang, "submit.rejected_reason", reason=ui.esc(item["reject_reason"])
