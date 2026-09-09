@@ -198,34 +198,74 @@ class TestCurationIsMandatory:
         assert search_mod.search(db, "Unreviewed") == []
 
 
+def site_directories() -> set:
+    """Every directory into which a third-party package could be installed.
+
+    Only entries actually named ``site-packages`` or ``dist-packages`` count.
+    ``site.getsitepackages()`` on Windows also returns the interpreter prefix
+    itself, and treating that as "installed" would classify the whole standard
+    library as third-party.
+    """
+    import site
+    import sysconfig
+
+    candidates = [
+        *(getattr(site, "getsitepackages", list)() or []),
+        getattr(site, "getusersitepackages", str)() or "",
+        sysconfig.get_paths().get("purelib", ""),
+        sysconfig.get_paths().get("platlib", ""),
+    ]
+    return {
+        Path(directory).resolve()
+        for directory in candidates
+        if directory and Path(directory).name in ("site-packages", "dist-packages")
+    }
+
+
+def is_installed_package(origin: Path, site_dirs: set) -> bool:
+    """True when a module's file lives inside an install directory."""
+    origin = Path(origin)
+    return any(directory in origin.parents for directory in site_dirs)
+
+
 class TestSourceHygiene:
+    def test_the_dependency_check_classifies_paths_correctly(self) -> None:
+        """Guard the guard, including the layouts CI runs on.
+
+        Windows keeps compiled standard modules in ``DLLs\\`` rather than
+        ``Lib\\``, so "is it under the stdlib path" is the wrong question;
+        "is it under site-packages" is the right one. Both layouts are checked
+        here so the real test below cannot pass for the wrong reason.
+        """
+        posix = {Path("/usr/lib/python3.12/site-packages")}
+        assert is_installed_package(
+            Path("/usr/lib/python3.12/site-packages/pytest/__init__.py"), posix
+        )
+        assert not is_installed_package(Path("/usr/lib/python3.12/json/__init__.py"), posix)
+
+        windows = {Path("C:/Python312/Lib/site-packages")}
+        assert is_installed_package(
+            Path("C:/Python312/Lib/site-packages/pytest/__init__.py"), windows
+        )
+        assert not is_installed_package(Path("C:/Python312/DLLs/unicodedata.pyd"), windows)
+        assert not is_installed_package(Path("C:/Python312/Lib/logging/__init__.py"), windows)
+
+        # The interpreter prefix must never be treated as an install directory.
+        assert Path("C:/Python312") not in site_directories()
+
     def test_no_module_imports_a_third_party_package(self) -> None:
         """The install story is "clone and run". Keep it that way.
 
         Rather than maintain a list of blessed module names, resolve every
-        import and require that it does not come from a site-packages
-        directory. Asking "is it installed?" rather than "is it under the
-        stdlib path?" is the portable form of the question: on Windows,
-        compiled standard modules such as ``unicodedata`` live in ``DLLs\\``
-        rather than ``Lib\\``, so a path-prefix test fails there for the wrong
-        reason. A new standard-library import needs no change here; a
-        dependency fails immediately.
+        import and require that it does not come from an install directory. A
+        new standard-library import needs no change here; a dependency fails
+        immediately.
         """
         import importlib.util
-        import site
         import sys
-        import sysconfig
 
-        installed = {
-            Path(directory).resolve()
-            for directory in (
-                *(getattr(site, "getsitepackages", list)() or []),
-                site.getusersitepackages() if hasattr(site, "getusersitepackages") else "",
-                sysconfig.get_paths().get("purelib", ""),
-                sysconfig.get_paths().get("platlib", ""),
-            )
-            if directory
-        }
+        site_dirs = site_directories()
+        assert site_dirs, "could not locate site-packages; the check would be vacuous"
         imports = re.compile(r"^\s*(?:from|import)\s+([A-Za-z_][\w.]*)", re.MULTILINE)
 
         for path in sorted(SOURCE.glob("*.py")):
@@ -238,11 +278,18 @@ class TestSourceHygiene:
                 if spec.origin in (None, "built-in", "frozen"):
                     continue
                 origin = Path(spec.origin).resolve()
-                offenders = [d for d in installed if d in origin.parents]
-                assert not offenders, (
+                assert not is_installed_package(origin, site_dirs), (
                     f"{path.name} imports {root}, which is an installed "
                     f"package rather than part of the standard library ({origin})"
                 )
+
+    def test_the_check_would_catch_a_real_dependency(self) -> None:
+        """pytest is genuinely installed, so it must be classified as such."""
+        import importlib.util
+
+        spec = importlib.util.find_spec("pytest")
+        assert spec and spec.origin
+        assert is_installed_package(Path(spec.origin).resolve(), site_directories())
 
     def test_callback_payloads_fit_telegram_s_limit(self) -> None:
         # 64 bytes is a hard API limit; long ids and tags are the usual way to

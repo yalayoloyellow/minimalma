@@ -257,7 +257,7 @@ tonearm/
   cli.py        setup / run / curator / doctor / backup / export / digest
 ```
 
-Roughly 6,800 lines, no dependencies, 217 tests. The conversation model is two
+Roughly 6,800 lines, no dependencies, 218 tests. The conversation model is two
 objects: **one screen message per chat**, edited in place for all browsing, and
 **audio messages** appended only when someone taps play — so the chat stays a
 readable listening log instead of a wall of menus.

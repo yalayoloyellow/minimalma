@@ -50,7 +50,7 @@ First public release.
 ### Notes
 
 - Zero runtime dependencies. Python 3.9 or newer.
-- 217 tests, including an invariants suite that pins the product's behavioural
+- 218 tests, including an invariants suite that pins the product's behavioural
   promises.
 
 [Unreleased]: https://github.com/yalayoloyellow/tonearm/compare/v0.1.0-alpha...HEAD
