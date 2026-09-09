@@ -281,3 +281,76 @@ in the package.
 They exist because these are exactly the properties a well-meaning refactor
 erodes one commit at a time. If one fails, the change is altering what this
 product is, and it should have to say so out loud.
+
+---
+
+## 13. Releases (schema v2)
+
+A track is never loose. It belongs to a single, an EP or an album; the release
+carries the artwork; and the release, not the track, is what a curator accepts.
+
+**Grouping** happens at intake, by the album tag, folded with the same rules as
+artist names — so `Группа крови` and `группа  крови` are one release, and the
+same album title by two different artists stays two releases. A track with no
+album tag becomes a single named after itself, which is what keeps every later
+code path free of a "loose track" special case. The kind follows the count:
+1 → single, 2–6 → EP, 7+ → album.
+
+**Artwork is a hard requirement.** `release_blockers()` returns `no_cover` and
+both `approve_release()` and the single-track `approve()` refuse. This is
+deliberate and it is the one place the project chooses friction: a release with
+no cover looks broken in every surface that shows it, and review is the only
+moment when someone will actually fix it. The artist is asked for artwork the
+instant it is missing, because they can solve it in one message.
+
+Cover resolution is layered — Telegram's own thumbnail first (it is already a
+durable photo `file_id`, so nothing is uploaded and nothing can be lost), then
+art embedded in the file, then an image sent by hand. A track with no cover of
+its own inherits the release's.
+
+**Delivery.** A release page is a photo message with the tracklist as its
+caption, which is why `ui.Screen` grew a `photo` field. Telegram cannot edit a
+text message into a photo message or the reverse, so a photo screen always
+replaces the previous one — and `TelegramError.message_gone` had to learn
+"there is no text in the message to edit", or navigating away from a release
+left two screens in the chat.
+
+**Migration.** `_migration_2` is a function rather than a SQL string because it
+ends in a backfill that needs Python's folding rules, and because a function
+keeps the DDL and the data move inside one transaction. `executescript()` would
+have committed the schema change before the backfill could fail, leaving a
+half-migrated database with no way back. There is a test that kills the backfill
+mid-flight and asserts the v1 database is untouched.
+
+---
+
+## 14. The curation desk
+
+`desk/` is optional, and the package below `tonearm/` does not import it — a
+test enforces that at column zero, allowing only the lazy, `ImportError`-guarded
+import in `cli.py`. Delete the directory and the bot is unchanged.
+
+It is a stdlib `ThreadingHTTPServer` serving one hand-written page. No Flask, no
+React, no npm: the design is flat lists and hairline rules, so a build step
+would buy nothing and cost the "clone and run" property. `pywebview` gives it a
+native window when present; otherwise it opens a browser tab. Neither is a
+dependency.
+
+**Loopback is not an authorisation boundary.** Any other process on the machine
+can reach `127.0.0.1`, so the server mints a per-session key, hands it out in
+the URL it opens, and compares it with `secrets.compare_digest` on every API
+call. The page and its assets are served without one; nothing else is.
+
+**Audio is served with Range support**, which is not optional: WebKit refuses to
+seek — and in some builds refuses to play at all — when a media response arrives
+without it. Files are fetched once through `getFile` and cached under the data
+directory, with an LRU trim, so scrubbing a track does not re-download it.
+
+**Destructive keys need a modifier.** The first version bound approve to `a` and
+decline to `d`, with auto-advance to the next item. During testing three
+submissions were declined in three seconds without anyone meaning to. Whatever
+sent those keystrokes, the lesson stands: a single bare letter that performs an
+irreversible-looking action and immediately moves on is a footgun. Publishing is
+`⌘↵`, declining is `⌘⌫`, and both offer an undo afterwards — which is the real
+fix, because a reversible decision is what makes a fast workflow safe to offer
+at all.

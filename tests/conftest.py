@@ -133,22 +133,46 @@ CATALOGUE = [
 ]
 
 
+#: Which release each catalogue entry belongs to. Two artists ship a
+#: multi-track release so the album paths are exercised, the rest are singles.
+RELEASE_OF = {
+    "Nightpost": "Stairwell",
+    "Stairwell": "Stairwell",
+    "Untitled III": "Winterlight",
+    "Untitled IV": "Winterlight",
+}
+
+
 @pytest.fixture()
 def seeded(db: Database) -> list[int]:
-    """A small but realistic approved catalogue: 12 tracks, 7 artists."""
+    """A small but realistic approved catalogue: 12 tracks in 10 releases."""
     ids: list[int] = []
     stamp = now()
     for index, (artist, title, tags, duration, features) in enumerate(CATALOGUE):
         artist_id = catalog.get_or_create_artist(db, artist)
         published = stamp - 86400 * (len(CATALOGUE) - index)
+        release_title = RELEASE_OF.get(title, title)
+        release_id = catalog.get_or_create_release(
+            db, artist_id, release_title, submitted_by=ARTIST, is_single=title not in RELEASE_OF
+        )
+        catalog.set_release_cover(db, release_id, f"cover{release_id}")
+        db.execute(
+            "UPDATE releases SET status='approved', reviewed_by=?, reviewed_at=?, "
+            "published_at=? WHERE id=?",
+            (CURATOR, published, published, release_id),
+        )
         cursor = db.execute(
-            "INSERT INTO tracks(artist_id, title, key, duration, file_id, file_unique_id, "
-            "status, submitted_by, submitted_at, published_at, reviewed_by, note, features) "
-            "VALUES(?,?,?,?,?,?,'approved',?,?,?,?,?,?)",
+            "INSERT INTO tracks(artist_id, release_id, track_no, title, key, album, duration, "
+            "file_id, file_unique_id, status, submitted_by, submitted_at, published_at, "
+            "reviewed_by, note, features) "
+            "VALUES(?,?,?,?,?,?,?,?,?,'approved',?,?,?,?,?,?)",
             (
                 artist_id,
+                release_id,
+                catalog.next_track_number(db, release_id),
                 title,
                 metadata.key_of(f"{artist} {title}"),
+                release_title,
                 duration,
                 f"file{index}",
                 f"uniq{index}",
@@ -162,6 +186,7 @@ def seeded(db: Database) -> list[int]:
         )
         track_id = int(cursor.lastrowid)
         catalog.set_tags(db, track_id, tags)
-        search.index_track(db, track_id, title, artist, "", tags, "")
+        catalog.refresh_release_kind(db, release_id)
+        search.index_track(db, track_id, title, artist, release_title, tags, "")
         ids.append(track_id)
     return ids

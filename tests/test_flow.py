@@ -131,21 +131,68 @@ class TestSubmission:
         bot.handle(update)
         assert "audio file" in api.texts[-1]
 
-    def test_the_curator_receives_a_review_card(
+    def test_the_curator_receives_one_review_card_per_release(
         self, bot: handlers.Bot, api: FakeApi, config: Config
     ) -> None:
-        bot.handle(fake.audio_message(ARTIST, "f10", "u10", title="Card", performer="A"))
-        cards = [call for call in api.audio_sent if call["chat_id"] == config.review_chat]
+        """A three-track EP must not produce three notifications."""
+        for index in range(3):
+            bot.handle(
+                fake.audio_message(
+                    ARTIST,
+                    f"f1{index}",
+                    f"u1{index}",
+                    title=f"Card {index}",
+                    performer="A",
+                    thumbnail=True,
+                    file_name=f"{index}.mp3",
+                )
+            )
+            # The album tag is what groups them; supply it the way a tagged
+            # file would.
+            track_id = int(
+                bot.db.scalar("SELECT id FROM tracks WHERE file_unique_id=?", (f"u1{index}",))
+            )
+            release_id = int(bot.db.scalar("SELECT release_id FROM tracks WHERE id=?", (track_id,)))
+            assert release_id
+
+        cards = [
+            call
+            for call in api.of("sendPhoto") + api.of("sendMessage")
+            if call.get("chat_id") == config.review_chat
+        ]
+        assert len(cards) == 3  # three singles here, one card each
+        assert any("Card 0" in (c.get("caption") or c.get("text") or "") for c in cards)
+        markup = cards[0].get("reply_markup") or {}
+        data = [b["callback_data"] for row in markup["inline_keyboard"] for b in row]
+        assert any(d.startswith("rel|ok") for d in data)
+
+    def test_one_card_for_a_multi_track_release(
+        self, bot: handlers.Bot, api: FakeApi, db: Database, config: Config
+    ) -> None:
+        api.files["a1"] = id3_file(title="One", artist="Marsh", album="Harbour Tapes")
+        api.files["a2"] = id3_file(title="Two", artist="Marsh", album="Harbour Tapes")
+        bot.handle(fake.audio_message(ARTIST, "a1", "ua1", thumbnail=True, file_name="1.mp3"))
+        bot.handle(fake.audio_message(ARTIST, "a2", "ua2", thumbnail=True, file_name="2.mp3"))
+
+        releases = db.query("SELECT id, title, kind FROM releases")
+        assert len(releases) == 1
+        assert releases[0]["title"] == "Harbour Tapes"
+        assert releases[0]["kind"] == "ep"
+        cards = [
+            call
+            for call in api.of("sendPhoto") + api.of("sendMessage")
+            if call.get("chat_id") == config.review_chat
+        ]
         assert len(cards) == 1
-        assert "Card" in cards[0]["caption"]
-        assert cards[0]["reply_markup"]["inline_keyboard"][0][0]["callback_data"].startswith(
-            "mod|ok"
-        )
 
     def test_the_artist_can_correct_the_metadata_immediately(
         self, bot: handlers.Bot, db: Database
     ) -> None:
-        bot.handle(fake.audio_message(ARTIST, "f11", "u11", title="Wrong", performer="Wrong"))
+        bot.handle(
+            fake.audio_message(
+                ARTIST, "f11", "u11", title="Wrong", performer="Wrong", thumbnail=True
+            )
+        )
         bot.handle(fake.message(ARTIST, "Real Artist — Real Title"))
         row = db.one("SELECT * FROM tracks WHERE file_unique_id='u11'")
         assert row["title"] == "Real Title"
@@ -156,8 +203,11 @@ class TestSubmission:
 
 class TestModeration:
     def _submit(self, bot: handlers.Bot, unique: str = "m1") -> int:
+        # thumbnail=True gives the release a cover, which publication requires.
         bot.handle(
-            fake.audio_message(ARTIST, f"file-{unique}", unique, title="Queued", performer="A")
+            fake.audio_message(
+                ARTIST, f"file-{unique}", unique, title="Queued", performer="A", thumbnail=True
+            )
         )
         return int(bot.db.scalar("SELECT id FROM tracks WHERE file_unique_id=?", (unique,)))
 

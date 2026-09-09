@@ -111,6 +111,10 @@ class Config:
     #: Set false only if you accept unreviewed material. Off by default and
     #: loudly discouraged: curation is the product.
     auto_approve: bool = False
+    #: Refuse to publish a release with no artwork. On by default: a release
+    #: without a cover looks broken everywhere it appears, and review is the
+    #: one moment when someone will actually fix it.
+    require_cover: bool = True
     #: Opt-in weekly digest. There is no other outbound notification.
     weekly_digest: bool = True
     #: Log verbosity: "quiet", "normal" or "debug".
@@ -147,6 +151,7 @@ class Config:
             "station_name": self.station_name,
             "station_tagline": self.station_tagline,
             "auto_approve": self.auto_approve,
+            "require_cover": self.require_cover,
             "weekly_digest": self.weekly_digest,
             "log_level": self.log_level,
             "limits": vars(self.limits),
@@ -201,6 +206,7 @@ def load(home: Path | None = None) -> Config:
         cfg.station_name = str(raw.get("station_name") or "Tonearm")
         cfg.station_tagline = str(raw.get("station_tagline") or "")
         cfg.auto_approve = bool(raw.get("auto_approve", False))
+        cfg.require_cover = bool(raw.get("require_cover", True))
         cfg.weekly_digest = bool(raw.get("weekly_digest", True))
         cfg.log_level = str(raw.get("log_level") or "normal")
         _coerce(cfg.limits, raw.get("limits"))

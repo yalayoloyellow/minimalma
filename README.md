@@ -1,16 +1,15 @@
 # Tonearm
 
-A curated music streaming service that runs entirely inside a Telegram bot.
+Кураторский стриминг, который целиком живёт внутри телеграм-бота.
 
-Artists submit tracks. A person listens to every one of them and decides. What
-gets published lands in a catalogue with search, artist pages, playlists and
-recommendations — all of it inside the chat window, with no app to install and
-nothing to host beyond the bot itself.
+Артисты присылают релизы. Человек слушает каждый и решает. То, что опубликовано,
+попадает в каталог с поиском, страницами артистов, плейлистами и рекомендациями —
+всё в окне чата, без приложения и без хостинга, кроме самого бота.
 
-Start it with a bot token and nothing else:
+Запускается одним токеном и больше ничем:
 
 ```bash
-uv tool install git+https://github.com/yalayoloyellow/tonearm && tonearm setup && tonearm run
+uv tool install git+https://github.com/yalayoloyellow/tonearm && tonearm setup && tonearm desk
 ```
 
 [![CI](https://github.com/yalayoloyellow/tonearm/actions/workflows/ci.yml/badge.svg)](https://github.com/yalayoloyellow/tonearm/actions/workflows/ci.yml)
@@ -18,78 +17,126 @@ uv tool install git+https://github.com/yalayoloyellow/tonearm && tonearm setup &
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![Dependencies: none](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](pyproject.toml)
 
+[English version](README.en.md)
+
 ---
 
-## Why this exists
+## Зачем
 
-Independent artists are not badly served by streaming platforms; they are
-served *incidentally*. The catalogue is infinite, the ranking optimises for
-time spent, and an unknown record has no route to a listener that does not run
-through an algorithm tuned for something else entirely.
+Независимых артистов стриминги обслуживают не плохо, а **попутно**. Каталог
+бесконечен, ранжирование оптимизирует проведённое время, и у неизвестной записи
+нет ни одного маршрута к слушателю, который не проходил бы через алгоритм,
+настроенный совсем на другое.
 
-A small station with a human at the front solves a different problem, and it
-turns out to be a small program. Telegram already supplies the hard parts:
-identity, file hosting, an audio player that works on every platform,
-background playback, and a chat that doubles as a listening history.
+Маленькая станция с человеком на входе решает другую задачу — и оказывается
+небольшой программой. Телеграм уже даёт всё дорогое: аккаунты, хранение файлов,
+аудиоплеер на всех платформах, фоновое воспроизведение и чат, который сам по себе
+работает как история прослушивания.
 
-## What it does
+---
 
-**For listeners**
+## Что умеет
 
-- A finite selection each day, chosen for you. When it runs out, it says so.
-- Discovery on request, in small batches, capped per day.
-- Search across titles, artists, albums and curator tags — Latin and Cyrillic
-  find each other, and typos still land.
-- A library of saved tracks and followed artists.
-- Mixes: curated playlists and generated sequences that walk between related
-  tracks instead of jumping.
-- Inline mode, so any track can be shared into any other chat.
+### Слушателю
 
-**For artists**
-
-- Send an audio file to the bot. That is the whole submission flow.
-- Tags, cover art, title, artist and album are read out of the file — ID3v2,
-  ID3v1, FLAC, Ogg Vorbis, Opus, MP4/M4A and WAV — and can be corrected in one
-  message.
-- Every submission gets an answer, published or not, with a reason.
-- Your own play, save and follower counts, visible only to you.
-
-**For curators**
-
-- A review queue with the audio, the metadata and automatic quality checks:
-  loudness, clipping, true-peak overs, dynamic range, and the spectral cutoff
-  that reveals a 128 kbps re-encode uploaded as lossless.
-- Approve, decline with a reason, retag, add a note, or fix the metadata.
-- Nothing is ever published automatically.
-
-## What it deliberately does not do
-
-These are enforced in code and pinned by tests in
-[`tests/test_invariants.py`](tests/test_invariants.py). They are the product,
-not a configuration accident.
-
-| Not this | Instead |
+| | |
 | --- | --- |
-| Autoplay, endless queues | Every track requires a tap. No exceptions in the codebase. |
-| An infinite feed | A finite daily selection that ends with "that is all for today". |
-| Re-rollable recommendations | The daily selection is written once and cannot be regenerated. |
-| Play counts, like counts, follower counts | Listeners see none of them. Artists see their own. |
-| Streaks, badges, levels, "you're on fire" | Nothing. A test fails if such a string appears. |
-| Push notifications | One optional weekly note, off by default. The only other unsolicited message is the answer to your own submission. |
-| Ranking by skip rate or session length | Ranking by whether people keep a track. |
-| Emoji-heavy UI | Monochrome text. |
+| **Сегодня** | Конечная дневная подборка, отобранная под вас. Кончилась — так и сказано. |
+| **Найти** | Discover по запросу, маленькими порциями, с лимитом на день. |
+| **Релизы** | Синглы, EP и альбомы: обложка, трек-лист, каждый трек по нажатию. |
+| **Поиск** | По названиям, артистам, релизам и тегам куратора. Латиница и кириллица находят друг друга, опечатки прощаются. |
+| **Библиотека** | Сохранённые треки и подписки на артистов. |
+| **Миксы** | Кураторские плейлисты и собранные последовательности, которые идут шагом, а не прыжком. |
+| **Inline** | Любой трек пересылается в любой чат через `@бот запрос`. |
 
-The exploration term in the ranker exists for the same reason: an unheard track
-gets a bonus proportional to how few people have been shown it, and every daily
-selection reserves a slot for the least-exposed track in the catalogue. A
-record nobody has played yet is a feature to fix, not a signal of low quality.
+### Артисту
 
-## Install
+- Отправить аудиофайл боту — это вся форма подачи.
+- Теги, обложка, название, артист и альбом читаются **из самого файла**: ID3v2,
+  ID3v1, FLAC, Ogg Vorbis, Opus, MP4/M4A, WAV. Исправить — одним сообщением
+  вида `Артист — Название`.
+- Несколько треков одного релиза шлются подряд и **группируются по тегу альбома**.
+  Трек без альбома становится синглом.
+- Нет обложки — бот попросит её сразу, картинкой. Без обложки не публикуется
+  ничего.
+- Ответ приходит в любом случае: опубликовано или нет, и почему.
+- Свои прослушивания, сохранения и подписчики — видны только вам.
 
-Any one of these works. The first is the shortest.
+### Куратору
+
+- Очередь из **релизов**, а не из россыпи треков: сингл, EP или альбом целиком.
+- В карточке — обложка, трек-лист, метаданные и автоматические проверки:
+  громкость, клиппинг, перегруз по true peak, динамический диапазон и
+  спектральный срез, выдающий 128 kbps, залитый как lossless.
+- Опубликовать, отклонить с причиной, перетегировать, написать заметку,
+  поправить метаданные, приложить обложку.
+- Автоматически не публикуется ничего и никогда.
+
+---
+
+## Кураторы: кто это и как назначаются
+
+Куратор — единственный, кто может что-либо опубликовать. Механика простая и
+проверяется на сервере.
+
+**1. Первый куратор появляется при настройке.** `tonearm setup` спрашивает ваш
+Telegram user id и записывает его в `config.json` как `owner`.
+
+**2. Если id неизвестен** — запустите бота и отправьте ему `/whoami`, он ответит
+числом. Дальше:
 
 ```bash
-# uv (recommended — installs an isolated tool, no virtualenv to manage)
+tonearm curator add 123456789
+tonearm curator remove 123456789
+tonearm curator list
+```
+
+**3. Правило одно:** `is_curator(id)` = `id == owner` или `id ∈ curators`.
+
+**4. Проверка — на сервере, в каждом callback модерации**, а не прятанием
+кнопок. Слушатель, вручную подставивший `rel|ok|<id>`, получит отказ; на это
+есть тест.
+
+**Несколько кураторов.** Создайте приватную группу, добавьте туда бота и укажите
+её chat id в `review_chat` при настройке. Тогда карточки релизов приходят в
+группу и любой куратор из неё может нажать кнопку. Без `review_chat` карточки
+уходят каждому куратору в личку.
+
+**Что видит куратор и не видит слушатель:** очередь, счётчики прослушиваний,
+статистику станции, число треков, которые ещё никому не показывались.
+
+---
+
+## Чего здесь сознательно нет
+
+Это не настройки, а сам продукт. Всё перечисленное зафиксировано тестами в
+[`tests/test_invariants.py`](tests/test_invariants.py) — если коммит их ломает,
+он меняет суть продукта и обязан сказать об этом вслух.
+
+| Не так | А так |
+| --- | --- |
+| Автоплей, бесконечная очередь | Каждый трек — по нажатию. В коде нет ни одного пути, отправляющего аудио без тапа. |
+| Бесконечная лента | Конечная дневная подборка, заканчивается словами «на сегодня всё». |
+| Перекатить рекомендации | Дневная подборка пишется один раз и не пересчитывается. |
+| Счётчики прослушиваний, лайков, подписчиков | Слушатель не видит ни одного. Артист видит только свои. |
+| Серии, значки, уровни, «ты в ударе» | Ничего. Тест падает, если такое слово появится в строках. |
+| Пуши | Одна еженедельная сводка по явному согласию. Единственное другое непрошеное сообщение — ответ на вашу же заявку. |
+| Ранжирование по скипам и длине сессии | Ранжирование по тому, оставляют ли трек себе. |
+| Интерфейс из эмодзи | Монохромный текст. |
+
+Тот же принцип в ранжировании: неуслышанный трек получает бонус тем больший,
+чем меньшему числу людей его показывали, и в каждой дневной подборке один слот
+зарезервирован за самым непоказанным треком каталога. Запись, которую ещё никто
+не слушал, — это то, что надо исправить, а не признак низкого качества.
+
+---
+
+## Установка
+
+Любой из вариантов. Первый — самый короткий.
+
+```bash
+# uv — ставит изолированный инструмент, никаких venv руками
 uv tool install git+https://github.com/yalayoloyellow/tonearm
 ```
 
@@ -99,192 +146,204 @@ pipx install git+https://github.com/yalayoloyellow/tonearm
 ```
 
 ```bash
-# pip, into a virtualenv you control
-pip install git+https://github.com/yalayoloyellow/tonearm
-```
-
-```bash
-# or just clone it — there is nothing to install
+# или просто склонировать — ставить нечего
 git clone https://github.com/yalayoloyellow/tonearm && cd tonearm
 python3 -m tonearm setup
-python3 -m tonearm run
+python3 -m tonearm desk
 ```
 
-Requires **Python 3.9 or newer** and nothing else. `ffmpeg` is optional: with
-it you get loudness measurement, tempo estimation and the quality checks;
-without it every other feature behaves identically.
+Нужен **Python 3.9 или новее** и больше ничего. `ffmpeg` опционален: с ним
+работают измерение громкости, оценка темпа и проверки качества; без него всё
+остальное ведёт себя ровно так же.
 
-## Set up
+---
 
-1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
-2. Run `tonearm setup`. It validates the token, asks who the first curator is,
-   and writes the configuration.
-3. Run `tonearm run`.
+## Настройка
 
-If you do not know your Telegram user id, start the bot and send it `/whoami`,
-then `tonearm curator add <id>`.
-
-Submissions can be routed to a private group so several curators see the same
-queue — give its chat id during setup. Otherwise review cards go to each
-curator directly.
+1. Создайте бота у [@BotFather](https://t.me/BotFather), скопируйте токен.
+2. `tonearm setup` — проверит токен, спросит первого куратора, запишет конфиг.
+3. `tonearm desk` — откроет пульт и запустит бота.
 
 ```
-tonearm setup                     first-run configuration
-tonearm run                       start the bot
-tonearm curator add|remove|list   manage who can publish
-tonearm doctor                    check the installation
-tonearm doctor --reindex          rebuild the search index
-tonearm backup [path]             consistent copy of the database
-tonearm export [path]             the catalogue as JSON
-tonearm digest                    send the weekly note now
+tonearm                           то же, что tonearm desk
+tonearm desk                      пульт куратора + бот
+tonearm run                       только бот, без окна (для сервера)
+tonearm setup                     первая настройка
+tonearm curator add|remove|list   кто может публиковать
+tonearm doctor                    проверка установки
+tonearm doctor --reindex          пересобрать поисковый индекс
+tonearm backup [путь]             согласованная копия базы
+tonearm export [путь]             каталог в JSON
+tonearm digest                    разослать еженедельную сводку сейчас
 ```
 
-Everything lives in one directory — `~/Library/Application Support/tonearm` on
-macOS, `$XDG_DATA_HOME/tonearm` on Linux, `%APPDATA%\tonearm` on Windows.
-Override it with `TONEARM_HOME`. Backing up the service means copying one
-SQLite file.
+Всё живёт в одной папке: `~/Library/Application Support/tonearm` на macOS,
+`$XDG_DATA_HOME/tonearm` на Linux, `%APPDATA%\tonearm` на Windows. Меняется
+переменной `TONEARM_HOME`. Бэкап станции — это копия одного файла SQLite.
 
-## Configuration
+---
 
-`config.json` in that directory. Every value has a working default; the ones
-worth knowing:
+## Пульт куратора
 
-```jsonc
-{
-  "station_name": "Tonearm",
-  "station_tagline": "",
-  "review_chat": -1001234567890,   // where the queue goes
-  "auto_approve": false,           // leave this alone; see below
-  "weekly_digest": true,           // allows listeners to opt in
-  "limits": {
-    "daily_selection": 5,          // tracks per day, per listener
-    "discover_batch": 3,           // tracks per discovery request
-    "discover_sessions_per_day": 3,
-    "submissions_per_day": 5,
-    "pending_per_artist": 10,
-    "min_duration": 20
-  },
-  "weights": {
-    "collaborative": 1.0,
-    "content": 1.0,
-    "curator": 0.6,
-    "freshness": 0.35,
-    "exploration": 0.5,            // how hard to push unheard tracks
-    "mmr_lambda": 0.7              // 1.0 relevance, 0.0 diversity
-  }
-}
+`tonearm desk` открывает локальное окно: тёмный моношрифтовый интерфейс, тот же
+визуальный язык, что и в остальных инструментах.
+
+- **Очередь** — релизы слева, карточка справа: обложка, заметка, метаданные и
+  все треки, каждый со своим плеером, техничкой и проверками. Слушать можно
+  сразу, ничего не скачивая руками.
+- **Обложка** — перетащить картинку в рамку или нажать на неё. Файл один раз
+  уходит в Telegram, чтобы получить постоянный `file_id`.
+- **Клавиатура** — `J`/`K` листать, пробел играть, `⌘↵` опубликовать,
+  `⌘⌫` отклонить, `/` поиск. Публикация и отказ **требуют модификатора**:
+  одиночная буква слишком легко нажимается случайно, а случайный отказ выносит
+  очередь по строке в секунду.
+- **Отмена** — после публикации или отказа всплывает «Отменить». Любое решение
+  обратимо; именно поэтому быстрый режим вообще можно предлагать.
+- **Каталог, артисты, плейлисты, станция** — правка метаданных, снятие с
+  публикации, сборка кураторских миксов, сводка.
+- **Бот** — старт и стоп прямо из окна.
+
+Пульт — обычная веб-страница без сборки: stdlib-сервер, чистый HTML/CSS/JS,
+никакого npm. Нативное окно появится, если поставить `pywebview`; иначе
+откроется вкладка браузера. Каталог общий с ботом — это одна и та же база.
+
+Удалите каталог `desk/` — бот продолжит работать как ни в чём не бывало.
+
+---
+
+## Релизы и обложки
+
+Трек никогда не висит сам по себе: он принадлежит синглу, EP или альбому.
+
+- **Группировка** — по тегу альбома внутри одного артиста, с тем же свёртыванием
+  названий, что и у имён: `Группа крови` и `группа  крови` — один релиз.
+- **Тип** — считается сам: 1 трек — сингл, 2–6 — EP, 7 и больше — альбом.
+- **Обложка живёт на релизе.** Трек берёт её оттуда, если у него нет своей.
+  Приоритет источников: превью Telegram (это уже готовый постоянный `file_id`),
+  затем встроенная картинка из файла, затем присланная руками.
+- **Без обложки не публикуется ничего** — ни релизом, ни отдельным треком.
+  Отключается флагом `require_cover`, но не стоит: релиз без обложки выглядит
+  сломанным везде, где показывается, а момент разбора — единственный, когда это
+  реально починят.
+- **Модерация — релизом.** Публикация принимает все ждущие треки внутри, отказ
+  отклоняет их вместе с релизом.
+- **Выдача — альбомами.** Экран релиза приходит картинкой с трек-листом в
+  подписи; каждый трек играется отдельным нажатием, «слушать целиком» запускает
+  последовательность, которая всё равно двигается только по тапу.
+
+Обложка не «слетает», потому что аудио не перезаливается: хранится `file_id`
+Телеграма и переотправляется, так что картинка в плеере — это картинка из
+исходного файла.
+
+---
+
+## Как работают рекомендации
+
+Три сигнала, смешиваются по тому, сколько человек реально сделал, потом
+диверсифицируются.
+
+**Контент.** Каждый трек — разрежённый TF-IDF-вектор по тегам куратора, артисту,
+десятилетию и акустике, разложенной по грубым полосам (темп, яркость, громкость,
+текстура, динамика). Косинус с профилем вкуса, у которого период полураспада 45
+дней. Работает с первого дня трека — единственное, что здесь вообще имеет
+значение.
+
+**Коллаборативный.** Item-item по совстречаемости лайков, сохранений и
+дослушиваний с подавлением популярности:
+
+```
+sim(i, j) = cooc(i, j) / (pop(i)^0.5 · pop(j)^0.5)
 ```
 
-`auto_approve` exists because operators ask for it. Turning it on makes this a
-different product: the curation is the only thing separating a small station
-from an upload folder.
+Без знаменателя самый заигранный трек становится соседом всему. Хранится топ-40
+соседей на трек, пересборка — в фоне.
 
-## How the recommendations work
-
-Three signals, blended by how much the listener has actually done, then
-diversified.
-
-**Content** — every track becomes a sparse TF‑IDF vector over curator tags, the
-artist, the decade, and acoustic descriptors bucketed into coarse bands (tempo,
-brightness, loudness, texture, dynamics). Cosine similarity against a
-time-decayed profile of what you kept. This works on a track's first day, which
-is the only thing that matters here.
-
-**Collaborative** — item-item co-occurrence over likes, saves and completions
-with popularity damping:
+**Экспозиция.** Бонус в форме UCB1:
 
 ```
-sim(i, j) = cooc(i, j) / (pop(i)^a · pop(j)^(1-a))          a = 0.5
+explore(t) = sqrt( ln(E + 2) / (показов(t) + 1) )
 ```
 
-Without the denominator, the most-played track becomes everyone's neighbour.
-The top 40 neighbours per track are materialised and rebuilt in the background.
+Знаменатель — сколько раз трек **показали**, а не проиграли: трек, который
+никому не предлагали, ни в чём не провалился.
 
-**Exposure** — a UCB1-shaped bonus:
+Смешивание по уверенности: `conf = mass / (mass + 12)`. Холодный слушатель
+ранжируется почти целиком по кураторству и контенту. При этом вес контента —
+`1 − 0.5·conf`: даже у активного слушателя контент сохраняет половину влияния,
+потому что чистый CF сходится к тому, что уже популярно, а на маленькой станции
+это первые пятьдесят одобренных треков.
 
-```
-explore(t) = sqrt( ln(E + 2) / (shown(t) + 1) )
-```
+Финальный отбор — MMR (`λ·score − (1−λ)·max сходство с уже выбранным`, λ = 0.7)
+с жёстким правилом «один трек на артиста». Пять треков — это пять артистов.
 
-where `E` is total catalogue exposure. New and overlooked tracks surface
-without anyone having to promote them.
+---
 
-The blend is confidence-weighted — `conf = mass / (mass + 12)` — so a cold
-listener is ranked almost entirely on content and curation, and collaborative
-signal grows in as it earns the right to. Final selection runs Maximal Marginal
-Relevance (`λ·score − (1−λ)·max similarity to what is already chosen`) with a
-hard one-track-per-artist rule.
+## Метаданные
 
-Mixes are a greedy nearest-neighbour walk with a tempo-jump penalty and a ban
-on consecutive tracks by the same artist, so a mix has a shape.
+Обложки и теги ломаются одинаково скучными способами, поэтому приём сверяет
+четыре источника по убыванию доверия: теги внутри файла → `ffprobe` →
+`performer`/`title` от Телеграма → имя файла.
 
-## Metadata
+Парсеры побайтовые и на чистом Python: synchsafe-целые, разница размеров фреймов
+между ID3v2.3 и v2.4, unsynchronisation, все четыре кодировки, приоритет типов
+картинок APIC, метаблоки FLAC, `METADATA_BLOCK_PICTURE`, сборка страниц Ogg,
+дерево атомов MP4. Из названий вычищаются `(Official Video)`, `[FREE]` и хвостовое
+`prod. by`; `feat.` отделяется; имена артистов сворачиваются по регистру,
+письменности и диакритике, так что `Аквариум` и `Akvarium` — один артист.
 
-Covers and tags go wrong in specific, boring ways, so intake reconciles four
-sources in descending order of trust: tags embedded in the file, then
-`ffprobe`, then the `performer`/`title` Telegram parsed, then the filename.
+Дубли ловятся тремя способами: тот же `file_unique_id`, тот же свёрнутый ключ
+`артист + название`, либо нечёткое совпадение имён при разнице длительности
+≤ 4 секунд.
 
-The parsers are byte-level and pure Python — synchsafe integers, ID3v2.2/2.3/2.4
-frame layout differences, unsynchronisation, all four text encodings, APIC
-picture-type priority, FLAC metadata blocks, `METADATA_BLOCK_PICTURE`, Ogg page
-reassembly, the MP4 atom tree. Titles are cleaned of `(Official Video)`,
-`[FREE]` and trailing producer credits; `feat.` is split off; artist names are
-folded across case, script and diacritics so `Аквариум` and `Akvarium` are one
-artist.
+---
 
-Cover art never "slips off" because the service does not re-host it. Telegram's
-own thumbnail — already a durable photo `file_id` — is preferred, and the audio
-file keeps whatever art it was uploaded with, so the artwork in the player is
-the artwork in the file.
-
-Duplicates are caught three ways: identical `file_unique_id`, identical folded
-`artist + title` key, or a fuzzy name match within four seconds of duration.
-
-## Architecture
+## Устройство
 
 ```
 tonearm/
-  telegram.py   Bot API client: long polling, multipart, 429 backoff, error vocabulary
-  db.py         SQLite schema, migrations, per-thread connections, WAL
-  metadata.py   ID3/FLAC/Ogg/MP4/WAV parsing, normalisation, transliteration
-  audio.py      ffprobe/ffmpeg + a pure-Python FFT, tempo and quality checks
-  catalog.py    Intake, deduplication, moderation, the catalogue itself
-  search.py     FTS5 with a transliterated column and a fuzzy fallback
-  recommend.py  Vectors, item-item CF, exposure fairness, MMR, daily sets, mixes
-  ui.py         Message rendering and keyboards
-  handlers.py   Update routing and conversation state
-  app.py        Polling loop, worker shards, background maintenance
-  cli.py        setup / run / curator / doctor / backup / export / digest
+  telegram.py   Клиент Bot API: long polling, multipart, backoff на 429, словарь ошибок
+  db.py         Схема SQLite, миграции, соединение на поток, WAL
+  metadata.py   Разбор ID3/FLAC/Ogg/MP4/WAV, нормализация, транслитерация
+  audio.py      ffprobe/ffmpeg + FFT на чистом Python, темп, проверки качества
+  catalog.py    Приём, релизы, дедупликация, модерация, сам каталог
+  search.py     FTS5 с колонкой транслита и нечётким запасным вариантом
+  recommend.py  Векторы, item-item CF, справедливость экспозиции, MMR, подборки, миксы
+  ui.py         Отрисовка сообщений и клавиатур
+  handlers.py   Маршрутизация апдейтов и состояние диалога
+  app.py        Цикл опроса, шардирование воркеров, фоновое обслуживание
+  cli.py        setup / run / desk / curator / doctor / backup / export / digest
+desk/           Пульт куратора: stdlib-сервер + страница без сборки (опционален)
 ```
 
-Roughly 6,800 lines, no dependencies, 218 tests. The conversation model is two
-objects: **one screen message per chat**, edited in place for all browsing, and
-**audio messages** appended only when someone taps play — so the chat stays a
-readable listening log instead of a wall of menus.
+Модель разговора — два объекта: **один экран на чат**, редактируемый на месте
+для всей навигации, и **аудиосообщения**, добавляемые только по нажатию. Чат
+остаётся читаемым логом прослушивания, а не стеной меню.
 
-[`docs/DESIGN.md`](docs/DESIGN.md) records why each of these is built the way it
-is, including the alternatives that were tried and rejected.
-[`docs/OPERATING.md`](docs/OPERATING.md) covers running it as a service.
+[`docs/DESIGN.md`](docs/DESIGN.md) — почему каждая часть сделана именно так,
+включая отвергнутые альтернативы. [`docs/OPERATING.md`](docs/OPERATING.md) —
+эксплуатация: systemd, launchd, Docker, бэкапы, лимиты.
 
-## Development
+---
+
+## Разработка
 
 ```bash
 git clone https://github.com/yalayoloyellow/tonearm && cd tonearm
 uv venv && uv pip install pytest ruff
-.venv/bin/python -m pytest      # 218 tests, ~4 seconds, no network
+.venv/bin/python -m pytest      # 285 тестов, ~30 секунд, без сети
 .venv/bin/ruff check .
 ```
 
-The test suite drives the real update router through a Telegram double, so
-submission, moderation, playback and privacy are exercised end to end without a
-network. Contributions are welcome — see
+Тесты гоняют настоящий маршрутизатор апдейтов через дубль Telegram, а пульт —
+через настоящий HTTP-сокет, так что приём, модерация, воспроизведение и
+приватность проверяются от начала до конца без сети. Правила участия —
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Status
+## Статус
 
-`0.1.0-alpha`. The data model is stable and migrated by version, but this has
-not yet run a large public station. Report what breaks.
+`0.2.0-alpha`. Модель данных стабильна и мигрируется по версии схемы, но на
+большой публичной станции это ещё не крутилось. Пишите, что сломалось.
 
-## License
+## Лицензия
 
-MIT. See [LICENSE](LICENSE).
+MIT, см. [LICENSE](LICENSE).

@@ -7,7 +7,7 @@ present and every code path degrades cleanly when they are not.
 
 __all__ = ["__version__"]
 
-__version__ = "0.1.0a1"
-"""Distribution version (PEP 440). The human-facing label is ``0.1.0-alpha``."""
+__version__ = "0.2.0a1"
+"""Distribution version (PEP 440). The human-facing label is ``0.2.0-alpha``."""
 
-VERSION_LABEL = "0.1.0-alpha"
+VERSION_LABEL = "0.2.0-alpha"

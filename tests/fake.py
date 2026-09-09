@@ -9,6 +9,7 @@ project ("no audio was sent without a tap").
 from __future__ import annotations
 
 import struct
+import time
 from typing import Any
 
 
@@ -90,10 +91,15 @@ class FakeApi:
         self._record(
             "editMessageText", {"chat_id": chat_id, "message_id": message_id, "text": text, **kw}
         )
-        if message_id not in self.messages:
+        target = self.messages.get(message_id)
+        if target is None:
             return None
-        self.messages[message_id]["text"] = text
-        return self.messages[message_id]
+        if "photo" in target:
+            # Telegram answers "there is no text in the message to edit"; the
+            # real client turns that into None so the caller sends a new one.
+            return None
+        target["text"] = text
+        return target
 
     def edit_markup(self, chat_id: int, message_id: int, reply_markup: Any) -> Any:
         self._record(
@@ -131,6 +137,16 @@ class FakeApi:
 
     def drop_webhook(self) -> None:
         self._record("deleteWebhook", {})
+
+    def get_updates(self, offset: int, timeout: int = 25, limit: int = 100) -> list:
+        """Behave like an idle long poll: block briefly, then return nothing.
+
+        Returning immediately would spin the polling loop at full speed and
+        make any test that starts the service unreliable.
+        """
+        self._record("getUpdates", {"offset": offset, "timeout": timeout})
+        time.sleep(0.05)
+        return []
 
     def me(self) -> dict[str, Any]:
         return self.call("getMe")

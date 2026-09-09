@@ -47,6 +47,10 @@ class Intake:
     """The outcome of processing one uploaded file."""
 
     track_id: int | None = None
+    release_id: int | None = None
+    release_title: str = ""
+    track_no: int | None = None
+    needs_cover: bool = False
     title: str = ""
     artist: str = ""
     album: str = ""
@@ -131,6 +135,299 @@ def get_or_create_artist(db: Database, name: str, user_id: int | None = None) ->
 def artist_row(db: Database, artist_id: int) -> dict[str, Any] | None:
     row = db.one("SELECT * FROM artists WHERE id=?", (artist_id,))
     return dict(row) if row else None
+
+
+# --------------------------------------------------------------------------
+# Releases
+# --------------------------------------------------------------------------
+
+KIND_SINGLE = "single"
+KIND_EP = "ep"
+KIND_ALBUM = "album"
+
+#: Above this many tracks a release stops being an EP.
+EP_MAX_TRACKS = 6
+
+
+def kind_for(count: int, is_single: bool = False) -> str:
+    if is_single or count <= 1:
+        return KIND_SINGLE
+    return KIND_EP if count <= EP_MAX_TRACKS else KIND_ALBUM
+
+
+def get_or_create_release(
+    db: Database,
+    artist_id: int,
+    title: str,
+    year: int | None = None,
+    submitted_by: int | None = None,
+    is_single: bool = False,
+) -> int:
+    """Resolve a release by folded title within one artist, creating it if new."""
+    display = metadata.clean_title(title) or metadata.clean_text(title) or "Untitled"
+    key = metadata.key_of(display) or "untitled"
+    row = db.one("SELECT id FROM releases WHERE artist_id=? AND key=?", (artist_id, key))
+    if row is not None:
+        if year:
+            db.execute("UPDATE releases SET year=COALESCE(year, ?) WHERE id=?", (year, row["id"]))
+        return int(row["id"])
+    cursor = db.execute(
+        "INSERT INTO releases(artist_id, title, key, kind, year, status, "
+        "submitted_by, submitted_at) VALUES(?,?,?,?,?,?,?,?)",
+        (
+            artist_id,
+            display,
+            key,
+            KIND_SINGLE if is_single else KIND_EP,
+            year,
+            STATUS_PENDING,
+            submitted_by,
+            now(),
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
+def next_track_number(db: Database, release_id: int) -> int:
+    return (
+        int(
+            db.scalar(
+                "SELECT COALESCE(MAX(track_no), 0) FROM tracks WHERE release_id=?",
+                (release_id,),
+                default=0,
+            )
+        )
+        + 1
+    )
+
+
+def refresh_release_kind(db: Database, release_id: int) -> str:
+    """Keep single/EP/album in step with how many tracks the release holds."""
+    count = int(
+        db.scalar("SELECT COUNT(*) FROM tracks WHERE release_id=?", (release_id,), default=0)
+    )
+    kind = kind_for(count)
+    db.execute("UPDATE releases SET kind=? WHERE id=?", (kind, release_id))
+    return kind
+
+
+def release_cover(db: Database, release_id: int) -> str | None:
+    """The artwork for a release: its own, else the first one a track carried."""
+    row = db.one("SELECT cover_file_id FROM releases WHERE id=?", (release_id,))
+    if row is not None and row["cover_file_id"]:
+        return str(row["cover_file_id"])
+    fallback = db.scalar(
+        "SELECT cover_file_id FROM tracks WHERE release_id=? AND cover_file_id IS NOT NULL "
+        "ORDER BY track_no LIMIT 1",
+        (release_id,),
+    )
+    return str(fallback) if fallback else None
+
+
+def set_release_cover(db: Database, release_id: int, file_id: str) -> None:
+    db.execute("UPDATE releases SET cover_file_id=? WHERE id=?", (file_id, release_id))
+
+
+def release(db: Database, release_id: int, only_approved: bool = False) -> dict[str, Any] | None:
+    """A release with its tracks, in track order."""
+    row = db.one(
+        "SELECT r.*, a.name AS artist FROM releases r JOIN artists a ON a.id = r.artist_id "
+        "WHERE r.id=?",
+        (release_id,),
+    )
+    if row is None:
+        return None
+    item = dict(row)
+    clause = "AND t.status='approved'" if only_approved else ""
+    item["tracks"] = [
+        dict(track_row)
+        for track_row in db.query(
+            f"SELECT t.*, a.name AS artist FROM tracks t JOIN artists a ON a.id = t.artist_id "
+            f"WHERE t.release_id=? {clause} ORDER BY COALESCE(t.track_no, t.id)",
+            (release_id,),
+        )
+    ]
+    item["cover_file_id"] = release_cover(db, release_id)
+    item["duration"] = sum(int(t["duration"] or 0) for t in item["tracks"])
+    item["blockers"] = release_blockers(db, release_id)
+    return item
+
+
+def release_of(db: Database, track_id: int) -> dict[str, Any] | None:
+    row = db.one("SELECT release_id FROM tracks WHERE id=?", (track_id,))
+    if row is None or not row["release_id"]:
+        return None
+    return release(db, int(row["release_id"]))
+
+
+def release_blockers(db: Database, release_id: int) -> list[str]:
+    """What stands between this release and publication.
+
+    Artwork is the only hard requirement, and it is deliberately hard: a
+    release without a cover looks broken everywhere it is shown, and the one
+    moment someone will actually fix it is while it is being reviewed.
+    """
+    blockers: list[str] = []
+    if not release_cover(db, release_id):
+        blockers.append("no_cover")
+    if not db.scalar("SELECT COUNT(*) FROM tracks WHERE release_id=?", (release_id,), default=0):
+        blockers.append("no_tracks")
+    return blockers
+
+
+def update_release(db: Database, release_id: int, **fields: Any) -> None:
+    allowed = {"title", "kind", "year", "note", "cover_file_id"}
+    columns = {k: v for k, v in fields.items() if k in allowed}
+    if not columns:
+        return
+    if "title" in columns:
+        columns["key"] = metadata.key_of(str(columns["title"])) or "untitled"
+    assignments = ", ".join(f"{name}=?" for name in columns)
+    db.execute(f"UPDATE releases SET {assignments} WHERE id=?", (*columns.values(), release_id))
+
+
+def pending_releases(db: Database, limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
+    """The review queue, one row per release rather than per track."""
+    rows = db.query(
+        "SELECT r.*, a.name AS artist, "
+        "  (SELECT COUNT(*) FROM tracks t WHERE t.release_id=r.id AND t.status='pending') AS waiting, "
+        "  (SELECT COUNT(*) FROM tracks t WHERE t.release_id=r.id) AS total, "
+        "  (SELECT MIN(t.submitted_at) FROM tracks t WHERE t.release_id=r.id) AS first_at "
+        "FROM releases r JOIN artists a ON a.id = r.artist_id "
+        "WHERE r.status=? AND EXISTS (SELECT 1 FROM tracks t WHERE t.release_id=r.id "
+        "                             AND t.status='pending') "
+        "ORDER BY first_at ASC LIMIT ? OFFSET ?",
+        (STATUS_PENDING, limit, offset),
+    )
+    out = []
+    for row in rows:
+        item = dict(row)
+        item["cover_file_id"] = release_cover(db, int(row["id"]))
+        item["blockers"] = release_blockers(db, int(row["id"]))
+        out.append(item)
+    return out
+
+
+def pending_releases_total(db: Database) -> int:
+    return int(
+        db.scalar(
+            "SELECT COUNT(*) FROM releases r WHERE r.status=? AND EXISTS "
+            "(SELECT 1 FROM tracks t WHERE t.release_id=r.id AND t.status='pending')",
+            (STATUS_PENDING,),
+            default=0,
+        )
+    )
+
+
+def approve_release(
+    db: Database, release_id: int, curator_id: int, note: str = ""
+) -> tuple[dict[str, Any] | None, str]:
+    """Publish a release and every track still waiting inside it.
+
+    Returns ``(release, error)``. The error is a code, not a sentence, so the
+    caller can translate it.
+    """
+    item = release(db, release_id)
+    if item is None:
+        return None, "not_found"
+    blockers = release_blockers(db, release_id)
+    if blockers:
+        return None, blockers[0]
+
+    stamp = now()
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE releases SET status=?, reviewed_by=?, reviewed_at=?, published_at=?, "
+            "note=COALESCE(NULLIF(?, ''), note), reject_reason=NULL WHERE id=?",
+            (STATUS_APPROVED, curator_id, stamp, stamp, note.strip(), release_id),
+        )
+        conn.execute(
+            "UPDATE tracks SET status=?, reviewed_by=?, reviewed_at=?, published_at=? "
+            "WHERE release_id=? AND status=?",
+            (STATUS_APPROVED, curator_id, stamp, stamp, release_id, STATUS_PENDING),
+        )
+    published = release(db, release_id, only_approved=True)
+    for track_item in published["tracks"] if published else []:
+        _index(db, int(track_item["id"]))
+    return published, ""
+
+
+def reject_release(
+    db: Database, release_id: int, curator_id: int, reason: str = ""
+) -> dict[str, Any] | None:
+    item = release(db, release_id)
+    if item is None:
+        return None
+    stamp = now()
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE releases SET status=?, reviewed_by=?, reviewed_at=?, reject_reason=?, "
+            "published_at=NULL WHERE id=?",
+            (STATUS_REJECTED, curator_id, stamp, reason.strip()[:400] or None, release_id),
+        )
+        conn.execute(
+            "UPDATE tracks SET status=?, reviewed_by=?, reviewed_at=?, reject_reason=?, "
+            "published_at=NULL WHERE release_id=? AND status=?",
+            (
+                STATUS_REJECTED,
+                curator_id,
+                stamp,
+                reason.strip()[:400] or None,
+                release_id,
+                STATUS_PENDING,
+            ),
+        )
+    for track_item in item["tracks"]:
+        search.remove_track(db, int(track_item["id"]))
+    return release(db, release_id)
+
+
+def artist_releases(db: Database, artist_id: int, limit: int = 50) -> list[dict[str, Any]]:
+    rows = db.query(
+        "SELECT r.*, a.name AS artist, "
+        "  (SELECT COUNT(*) FROM tracks t WHERE t.release_id=r.id AND t.status='approved') AS n "
+        "FROM releases r JOIN artists a ON a.id = r.artist_id "
+        "WHERE r.artist_id=? AND r.status='approved' "
+        "ORDER BY COALESCE(r.year, 0) DESC, r.published_at DESC LIMIT ?",
+        (artist_id, limit),
+    )
+    return [
+        {**dict(row), "cover_file_id": release_cover(db, int(row["id"]))}
+        for row in rows
+        if row["n"]
+    ]
+
+
+def newest_releases(db: Database, limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
+    rows = db.query(
+        "SELECT r.*, a.name AS artist, "
+        "  (SELECT COUNT(*) FROM tracks t WHERE t.release_id=r.id AND t.status='approved') AS n "
+        "FROM releases r JOIN artists a ON a.id = r.artist_id "
+        "WHERE r.status='approved' ORDER BY r.published_at DESC LIMIT ? OFFSET ?",
+        (limit, offset),
+    )
+    return [
+        {**dict(row), "cover_file_id": release_cover(db, int(row["id"]))}
+        for row in rows
+        if row["n"]
+    ]
+
+
+def _index(db: Database, track_id: int) -> None:
+    """Put one approved track into the search index, release title included."""
+    item = track(db, track_id)
+    if item is None or item["status"] != STATUS_APPROVED:
+        return
+    album = item.get("release_title") or item.get("album") or ""
+    search.index_track(
+        db,
+        track_id,
+        item["title"],
+        item["artist"],
+        album,
+        item["tags"],
+        item.get("note") or "",
+    )
 
 
 # --------------------------------------------------------------------------
@@ -291,14 +588,31 @@ def intake(
     artist_id = get_or_create_artist(db, tags.artist, user_id)
     if tags.duration and not features.get("duration"):
         features["duration"] = tags.duration
+
+    # Every track belongs to a release. With an album tag the track joins (or
+    # opens) that release; without one it becomes a single named after itself,
+    # so the rest of the system never has to special-case a loose track.
+    release_title = tags.album or tags.title
+    release_id = get_or_create_release(
+        db,
+        artist_id,
+        release_title,
+        year=tags.year,
+        submitted_by=user_id,
+        is_single=not tags.album,
+    )
+    position = tags.track_no or next_track_number(db, release_id)
+
     cursor = db.execute(
         "INSERT INTO tracks("
-        " artist_id, title, key, album, year, duration, file_id, file_unique_id,"
-        " file_size, mime, cover_file_id, status, submitted_by, submitted_at,"
-        " features, quality"
-        ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " artist_id, release_id, track_no, title, key, album, year, duration,"
+        " file_id, file_unique_id, file_size, mime, cover_file_id, status,"
+        " submitted_by, submitted_at, features, quality"
+        ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             artist_id,
+            release_id,
+            position,
             tags.title,
             metadata.key_of(f"{tags.artist} {tags.title}"),
             tags.album or None,
@@ -317,6 +631,8 @@ def intake(
         ),
     )
     result.track_id = int(cursor.lastrowid)
+    result.release_id = release_id
+    result.track_no = position
     result.title = tags.title
     result.artist = tags.artist
     result.album = tags.album
@@ -325,6 +641,17 @@ def intake(
     result.cover_file_id = cover_file_id
     result.features = features
     result.quality = quality
+
+    # The first artwork to arrive becomes the release cover; a curator can
+    # replace it later.
+    if cover_file_id:
+        db.execute(
+            "UPDATE releases SET cover_file_id=COALESCE(cover_file_id, ?) WHERE id=?",
+            (cover_file_id, release_id),
+        )
+    refresh_release_kind(db, release_id)
+    result.release_title = release_title
+    result.needs_cover = not release_cover(db, release_id)
     if tags.genre:
         set_tags(db, result.track_id, [tags.genre])
     return result
@@ -388,8 +715,10 @@ def pending_total(db: Database) -> int:
 def track(db: Database, track_id: int) -> dict[str, Any] | None:
     """A track joined with its artist, tags and parsed feature blobs."""
     row = db.one(
-        "SELECT t.*, a.name AS artist, a.key AS artist_key, a.user_id AS artist_user "
-        "FROM tracks t JOIN artists a ON a.id = t.artist_id WHERE t.id=?",
+        "SELECT t.*, a.name AS artist, a.key AS artist_key, a.user_id AS artist_user, "
+        "r.title AS release_title, r.kind AS release_kind, r.year AS release_year "
+        "FROM tracks t JOIN artists a ON a.id = t.artist_id "
+        "LEFT JOIN releases r ON r.id = t.release_id WHERE t.id=?",
         (track_id,),
     )
     if row is None:
@@ -398,6 +727,10 @@ def track(db: Database, track_id: int) -> dict[str, Any] | None:
     item["tags"] = tags_of(db, track_id)
     item["features"] = _json(item.get("features"))
     item["quality"] = _json(item.get("quality"))
+    # Artwork resolves through the release, so a track never shows up bare
+    # just because its own file carried no picture.
+    if item.get("release_id"):
+        item["cover_file_id"] = release_cover(db, int(item["release_id"]))
     return item
 
 
@@ -407,7 +740,10 @@ def tracks(db: Database, ids: Sequence[int]) -> list[dict[str, Any]]:
         return []
     marks = ",".join("?" * len(ids))
     rows = db.query(
-        f"SELECT t.*, a.name AS artist FROM tracks t JOIN artists a ON a.id = t.artist_id "
+        f"SELECT t.*, a.name AS artist, r.title AS release_title, r.kind AS release_kind, "
+        f"COALESCE(r.cover_file_id, t.cover_file_id) AS cover_file_id "
+        f"FROM tracks t JOIN artists a ON a.id = t.artist_id "
+        f"LEFT JOIN releases r ON r.id = t.release_id "
         f"WHERE t.id IN ({marks})",
         tuple(ids),
     )
@@ -486,30 +822,41 @@ def approve(
     curator_id: int,
     note: str = "",
     tag_names: Sequence[str] | None = None,
+    require_cover: bool = True,
 ) -> dict[str, Any] | None:
-    """Publish a track. This is the only path into the listening catalogue."""
+    """Publish one track.
+
+    A release is normally accepted whole through :func:`approve_release`; this
+    is the single-track path, used when a curator wants one song out of a
+    submission. It enforces the same artwork requirement, so no track can reach
+    a listener without a cover.
+    """
     item = track(db, track_id)
     if item is None:
         return None
+    if (
+        require_cover
+        and item.get("release_id")
+        and "no_cover" in release_blockers(db, int(item["release_id"]))
+    ):
+        return None
     if tag_names is not None:
         set_tags(db, track_id, tag_names)
+    stamp = now()
     db.execute(
         "UPDATE tracks SET status=?, reviewed_by=?, reviewed_at=?, published_at=?, "
         "note=COALESCE(NULLIF(?, ''), note), reject_reason=NULL WHERE id=?",
-        (STATUS_APPROVED, curator_id, now(), now(), note.strip(), track_id),
+        (STATUS_APPROVED, curator_id, stamp, stamp, note.strip(), track_id),
     )
-    published = track(db, track_id)
-    if published:
-        search.index_track(
-            db,
-            track_id,
-            published["title"],
-            published["artist"],
-            published.get("album") or "",
-            published["tags"],
-            published.get("note") or "",
+    if item.get("release_id"):
+        # A release with a published track is itself published.
+        db.execute(
+            "UPDATE releases SET status=?, reviewed_by=?, reviewed_at=?, "
+            "published_at=COALESCE(published_at, ?) WHERE id=?",
+            (STATUS_APPROVED, curator_id, stamp, stamp, item["release_id"]),
         )
-    return published
+    _index(db, track_id)
+    return track(db, track_id)
 
 
 def reject(db: Database, track_id: int, curator_id: int, reason: str = "") -> dict[str, Any] | None:
@@ -520,6 +867,23 @@ def reject(db: Database, track_id: int, curator_id: int, reason: str = "") -> di
         "UPDATE tracks SET status=?, reviewed_by=?, reviewed_at=?, reject_reason=?, "
         "published_at=NULL WHERE id=?",
         (STATUS_REJECTED, curator_id, now(), reason.strip()[:400] or None, track_id),
+    )
+    search.remove_track(db, track_id)
+    return track(db, track_id)
+
+
+def restore_to_queue(db: Database, track_id: int) -> dict[str, Any] | None:
+    """Undo a review decision, putting the track back in the queue.
+
+    Every moderation action is reversible; that is what makes a fast keyboard
+    workflow safe to offer at all.
+    """
+    if track(db, track_id) is None:
+        return None
+    db.execute(
+        "UPDATE tracks SET status=?, reviewed_by=NULL, reviewed_at=NULL, "
+        "reject_reason=NULL, published_at=NULL WHERE id=?",
+        (STATUS_PENDING, track_id),
     )
     search.remove_track(db, track_id)
     return track(db, track_id)

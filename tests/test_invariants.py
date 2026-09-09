@@ -166,7 +166,9 @@ class TestOnlySolicitedMessages:
         self, bot: handlers.Bot, api: FakeApi, db: Database
     ) -> None:
         bot.handle(fake.message(LISTENER, "/start"))
-        bot.handle(fake.audio_message(ARTIST, "z1", "zz1", title="Mine", performer="A"))
+        bot.handle(
+            fake.audio_message(ARTIST, "z1", "zz1", title="Mine", performer="A", thumbnail=True)
+        )
         track_id = int(db.scalar("SELECT id FROM tracks WHERE file_unique_id='zz1'"))
         api.clear()
         bot.handle(fake.callback(CURATOR, f"mod|ok|{track_id}"))

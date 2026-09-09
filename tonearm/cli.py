@@ -24,8 +24,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if not args.command:
-        parser.print_help()
-        return 0
+        # Bare `tonearm` opens the desk when it is present, because that is
+        # what someone double-clicking or typing the name wants. Global flags
+        # already parsed (--home) are carried over rather than re-parsed.
+        if _desk_available():
+            args.command = "desk"
+            args.handler = _desk
+            args.port = 0
+            args.browser = False
+            args.no_bot = False
+        else:
+            parser.print_help()
+            return 0
     home = Path(args.home).expanduser() if args.home else None
     try:
         cfg = config_mod.load(home)
@@ -46,8 +56,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command")
 
-    run = sub.add_parser("run", help="start the bot")
+    run = sub.add_parser("run", help="start the bot (headless)")
     run.set_defaults(handler=_run)
+
+    desk = sub.add_parser("desk", help="open the curation desk")
+    desk.add_argument("--port", type=int, default=0, help="fixed port instead of a free one")
+    desk.add_argument("--browser", action="store_true", help="skip the native window")
+    desk.add_argument("--no-bot", action="store_true", help="do not start the bot with the desk")
+    desk.set_defaults(handler=_desk)
 
     setup = sub.add_parser("setup", help="first-run configuration")
     setup.add_argument("--token", help="bot token, if you would rather not be prompted")
@@ -102,6 +118,36 @@ def _run(args: argparse.Namespace, cfg: config_mod.Config) -> int:
     except KeyboardInterrupt:  # pragma: no cover - interactive
         pass
     return 0
+
+
+def _desk_available() -> bool:
+    """True when the optional ``desk/`` directory ships with this install."""
+    try:
+        import desk  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def _desk(args: argparse.Namespace, cfg: config_mod.Config) -> int:
+    """Open the desk, and start the bot alongside it unless told not to.
+
+    Running both from one command is the point: a curator should be able to
+    launch one thing and have a working station.
+    """
+    try:
+        from desk.launch import open_desk
+        from desk.server import Desk
+    except ImportError as exc:
+        _fail(f"the desk is not available in this installation: {exc}")
+        return 2
+    configure_logging(cfg)
+    desk = Desk(cfg)
+    if not args.no_bot and cfg.token:
+        status = desk.start_bot()
+        if status.get("error"):
+            _fail(status["error"])
+    return open_desk(cfg, port=args.port, prefer_window=not args.browser, desk=desk)
 
 
 def _setup(args: argparse.Namespace, cfg: config_mod.Config) -> int:
@@ -161,7 +207,8 @@ def _setup(args: argparse.Namespace, cfg: config_mod.Config) -> int:
     else:
         print("  ffmpeg         not found — audio analysis disabled (everything else works)")
     print()
-    print("Start it with:  tonearm run")
+    print("Open the curation desk with:  tonearm desk")
+    print("Or run headless with:          tonearm run")
     return 0
 
 

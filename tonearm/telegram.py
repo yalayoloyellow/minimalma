@@ -68,11 +68,19 @@ class TelegramError(Exception):
 
     @property
     def message_gone(self) -> bool:
+        """The target message cannot be edited — deleted, too old, or media.
+
+        "there is no text in the message to edit" is included deliberately: it
+        is what Telegram says when a photo message is asked to become text, and
+        the caller's response is the same as for a deleted message — send a new
+        one.
+        """
         d = self.description.lower()
         return (
             "message to edit not found" in d
             or "message to delete not found" in d
-            or ("message can't be edited" in d)
+            or "message can't be edited" in d
+            or "there is no text in the message to edit" in d
         )
 
     @property

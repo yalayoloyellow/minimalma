@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0-alpha] - 2026-09-09
+
+Releases become the unit of the catalogue, and a local curation console arrives
+alongside the bot.
+
+### Added
+
+- **Releases.** Every track belongs to a single, an EP or an album. Submissions
+  are grouped by their album tag within one artist, using the same folding rules
+  as artist names; the kind follows the track count. Listeners get a release
+  page — artwork, tracklist, one tap per track, and a "play it through" that
+  still advances only on a tap.
+- **Artwork is a publication requirement.** A release carries the cover and a
+  track inherits it. Nothing publishes without one, in the bot or on the desk.
+  Artists are asked for artwork the moment it is missing; curators can attach it
+  themselves. Controlled by `require_cover`, on by default.
+- **Release-level moderation.** The queue lists releases rather than loose
+  tracks, one review card per release rather than one per track, and publishing
+  or declining acts on every waiting track inside it.
+- **The curation desk** (`tonearm desk`) — a local console: the queue with
+  in-place playback, quality checks, metadata and note editing, drag-and-drop
+  artwork, the catalogue, artists, playlists, station statistics and a bot
+  start/stop switch. A stdlib HTTP server and a build-free page; `pywebview`
+  gives it a native window when installed, otherwise it opens in a browser.
+  Optional: delete `desk/` and the bot is unchanged.
+- `catalog.restore_to_queue` and the desk's undo, so every moderation decision
+  is reversible.
+
+### Changed
+
+- Schema version 2. Existing databases are migrated in one transaction: every
+  track is grouped into a release, artwork and track numbers are backfilled, and
+  a failure leaves a v1 database untouched.
+- `tonearm` with no arguments now opens the desk instead of printing help.
+- The bot's home screen gained a Releases entry and shows a release count.
+
+### Fixed
+
+- `Bad Request: message is not modified` was treated as retryable, costing about
+  fifteen seconds of a worker every time a listener tapped the same navigation
+  button twice.
+- Sequence state was written to the database but not to the in-memory user row,
+  so starting a playlist or a release and playing its first track in the same
+  request read a stale queue.
+- A mix could place two tracks by the same artist back to back.
+- Item-item co-occurrence raised `KeyError` on its mirrored write.
+- A photo screen could not be replaced by a text screen, leaving both in the
+  chat.
+
 ## [0.1.0-alpha] - 2026-09-09
 
 First public release.
@@ -53,5 +102,6 @@ First public release.
 - 218 tests, including an invariants suite that pins the product's behavioural
   promises.
 
-[Unreleased]: https://github.com/yalayoloyellow/tonearm/compare/v0.1.0-alpha...HEAD
+[Unreleased]: https://github.com/yalayoloyellow/tonearm/compare/v0.2.0-alpha...HEAD
+[0.2.0-alpha]: https://github.com/yalayoloyellow/tonearm/compare/v0.1.0-alpha...v0.2.0-alpha
 [0.1.0-alpha]: https://github.com/yalayoloyellow/tonearm/releases/tag/v0.1.0-alpha

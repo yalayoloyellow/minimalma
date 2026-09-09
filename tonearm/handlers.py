@@ -86,8 +86,16 @@ class Bot:
             return {}
         return value if isinstance(value, dict) else {}
 
-    def _set_data(self, user_id: int, data: dict[str, Any]) -> None:
-        catalog.set_user(self.db, user_id, state_data=json.dumps(data, ensure_ascii=False))
+    def _set_data(self, user: dict[str, Any], data: dict[str, Any]) -> None:
+        """Store per-chat state and keep the in-memory user row in step.
+
+        The caller usually reads that state back in the same request — starting
+        a sequence and immediately playing its first track, for instance — so
+        writing only to the database would hand the next call a stale copy.
+        """
+        payload = json.dumps(data, ensure_ascii=False)
+        catalog.set_user(self.db, int(user["id"]), state_data=payload)
+        user["state_data"] = payload
 
     def _set_state(self, user_id: int, state: str = "", **data: Any) -> None:
         catalog.set_user(
@@ -105,14 +113,41 @@ class Bot:
         user_id = int(user["id"])
         message_id = user.get("screen_msg")
         same_chat = user.get("screen_chat") == chat_id
+
+        if screen.photo:
+            # A text message cannot be edited into a photo, so a cover-bearing
+            # screen always replaces whatever screen was there.
+            if message_id and same_chat:
+                self.api.delete_message(chat_id, int(message_id))
+            sent = self.api.send_photo(
+                chat_id,
+                screen.photo,
+                caption=screen.text,
+                reply_markup=screen.markup,
+            )
+            if sent:
+                catalog.set_user(
+                    self.db, user_id, screen_chat=chat_id, screen_msg=int(sent["message_id"])
+                )
+                user["screen_chat"] = chat_id
+                user["screen_msg"] = int(sent["message_id"])
+            else:
+                # The cover id went stale; fall back to a plain text screen
+                # rather than leaving the listener with nothing.
+                self.show(chat_id, user, ui.Screen(screen.text, screen.markup), fresh=True)
+            return
+
+        replace = fresh
         if message_id and same_chat and not fresh:
             result = self.api.edit_message(
                 chat_id, int(message_id), screen.text, reply_markup=screen.markup
             )
             if result is not None:
                 return
-            # The message was deleted or is too old to edit: fall through.
-        if message_id and same_chat and fresh:
+            # Deleted, too old, or a photo screen that cannot become text.
+            # Either way the old message has to go so only one screen remains.
+            replace = True
+        if message_id and same_chat and replace:
             self.api.delete_message(chat_id, int(message_id))
         sent = self.api.send_message(chat_id, screen.text, reply_markup=screen.markup)
         if sent:
@@ -148,12 +183,17 @@ class Bot:
         if message.get("voice") or message.get("video_note"):
             self.api.send_message(chat_id, t(lang, "submit.not_audio"))
             return
+        if message.get("photo"):
+            self._on_photo(chat_id, user, message)
+            return
         if message.get("document"):
             mime = (message["document"].get("mime_type") or "").lower()
             if mime.startswith("audio/"):
                 payload = dict(message["document"])
                 payload.setdefault("duration", 0)
                 self._on_submission(chat_id, user, {**message, "audio": payload})
+            elif mime.startswith("image/"):
+                self._on_photo(chat_id, user, message)
             else:
                 self.api.send_message(chat_id, t(lang, "submit.not_audio"))
             return
@@ -239,6 +279,17 @@ class Bot:
             self._set_state(user_id)
             return
 
+        if kind == "relreason" and track_id:
+            self._set_state(user_id)
+            self._finish_release_rejection(chat_id, user, track_id, text)
+            return
+        if kind == "relnote" and track_id:
+            self._set_state(user_id)
+            catalog.update_release(self.db, track_id, note=text.strip()[:600])
+            self.api.send_message(chat_id, t(lang, "mod.saved"))
+            self._render_release_review(chat_id, user, track_id)
+            return
+
         if kind == "modreason" and track_id:
             self._set_state(user_id)
             self._finish_rejection(chat_id, user, track_id, text)
@@ -308,7 +359,7 @@ class Bot:
             return
 
         catalog.note_submission(self.db, user_id, day)
-        ahead = max(0, catalog.pending_total(self.db) - 1)
+        ahead = max(0, catalog.pending_releases_total(self.db) - 1)
         body = t(
             lang,
             "submit.received",
@@ -316,15 +367,36 @@ class Bot:
             artist=ui.esc(result.artist),
             duration=ui.hms(result.duration),
         )
+        if result.release_title:
+            body += "\n" + t(
+                lang,
+                "submit.in_release",
+                title=ui.esc(result.release_title),
+                n=result.track_no or 1,
+            )
         body += "\n\n" + t(lang, "submit.queued_position", count=ahead)
-        body += "\n\n" + t(lang, "submit.edit_hint")
-        self.api.send_message(chat_id, body)
-        self._set_state(user_id, f"fix:{result.track_id}")
-        self._notify_curators(result.track_id)
 
-    def _notify_curators(self, track_id: int) -> None:
+        # Artwork is a publication requirement, so ask for it now rather than
+        # letting the release sit in the queue blocked on something the artist
+        # could have fixed in one message.
+        if result.needs_cover and self.config.require_cover:
+            body += "\n\n" + t(lang, "cover.needed")
+            self._set_state(user_id, f"covr:{result.release_id}")
+        else:
+            body += "\n\n" + t(lang, "submit.edit_hint")
+            self._set_state(user_id, f"fix:{result.track_id}")
+        if (result.track_no or 1) == 1:
+            body += "\n\n" + t(lang, "submit.release_hint")
+        self.api.send_message(chat_id, body)
+
+        # One card per release, not one per track: a ten-track album should not
+        # produce ten notifications.
+        if (result.track_no or 1) == 1 and result.release_id:
+            self._notify_curators(result.release_id)
+
+    def _notify_curators(self, release_id: int) -> None:
         """Push a review card to the review chat, or to each curator directly."""
-        item = catalog.track(self.db, track_id)
+        item = catalog.release(self.db, release_id)
         if item is None:
             return
         targets: list[int] = []
@@ -334,19 +406,22 @@ class Bot:
             targets.extend(self.config.curators)
             if self.config.owner:
                 targets.append(self.config.owner)
+        lang = self.config.lang
+        screen = ui.review_release(lang, item)
+        text = f"<b>{t(lang, 'mod.new_submission')}</b>\n\n{screen.text}"
         for chat_id in dict.fromkeys(targets):
-            lang = self.config.lang
-            caption = f"<b>{t(lang, 'mod.new_submission')}</b>\n\n" + ui.review_caption(lang, item)
-            self.api.send_audio(
-                chat_id,
-                item["file_id"],
-                caption=caption[:1024],
-                reply_markup=ui.review_buttons(lang, track_id),
-                title=item["title"],
-                performer=item["artist"],
-                duration=item["duration"] or None,
-                disable_notification=True,
-            )
+            if screen.photo:
+                self.api.send_photo(
+                    chat_id,
+                    screen.photo,
+                    caption=text[:1024],
+                    reply_markup=screen.markup,
+                    disable_notification=True,
+                )
+            else:
+                self.api.send_message(
+                    chat_id, text, reply_markup=screen.markup, disable_notification=True
+                )
 
     # ------------------------------------------------------------ callbacks
     def _on_callback(self, query: dict[str, Any]) -> None:
@@ -461,6 +536,25 @@ class Bot:
             ack()
             self._render_tag(chat_id, user, args[0])
 
+        elif action == "rl" and args:
+            ack()
+            self._render_release(chat_id, user, int(args[0]))
+
+        elif action == "relall" and args:
+            ack()
+            self._start_release(chat_id, user, int(args[0]))
+
+        elif action == "rev" and args:
+            ack()
+            if self.config.is_curator(user_id):
+                self._render_release_review(chat_id, user, int(args[0]))
+
+        elif action == "rel" and len(args) >= 2:
+            if not self.config.is_curator(user_id):
+                ack(t(lang, "mod.not_curator"), alert=True)
+                return
+            self._moderate_release(chat_id, user, ack, args[0], int(args[1]))
+
         elif action == "mix":
             ack()
             self._render_mix(chat_id, user)
@@ -558,6 +652,12 @@ class Bot:
                     t(lang, "library.following"),
                 ),
             )
+        elif target == "releases":
+            self.show(
+                chat_id,
+                user,
+                ui.releases_screen(lang, catalog.newest_releases(self.db, limit=12)),
+            )
         elif target == "artists":
             self._render_artists(chat_id, user)
         elif target == "mixes":
@@ -579,6 +679,9 @@ class Bot:
 
     def _counts(self) -> dict[str, int]:
         return {
+            "releases": int(
+                self.db.scalar("SELECT COUNT(*) FROM releases WHERE status='approved'", default=0)
+            ),
             "tracks": int(
                 self.db.scalar("SELECT COUNT(*) FROM tracks WHERE status='approved'", default=0)
             ),
@@ -801,6 +904,29 @@ class Bot:
             fresh=True,
         )
 
+    def _render_release(self, chat_id: int, user: dict[str, Any], release_id: int) -> None:
+        """The album page: artwork, tracklist, one tap per track."""
+        lang = self._lang(user)
+        item = catalog.release(self.db, release_id, only_approved=True)
+        if item is None or item["status"] != catalog.STATUS_APPROVED or not item["tracks"]:
+            self.show(chat_id, user, ui.Screen(t(lang, "common.not_found")))
+            return
+        # The release becomes the current sequence, so "play it through" and
+        # the Next button on each track agree about what comes after.
+        self._set_data(
+            user, {"seq": [track["id"] for track in item["tracks"]], "label": item["title"]}
+        )
+        self.show(chat_id, user, ui.release_screen(lang, item))
+
+    def _start_release(self, chat_id: int, user: dict[str, Any], release_id: int) -> None:
+        item = catalog.release(self.db, release_id, only_approved=True)
+        if not item or not item["tracks"]:
+            return
+        self._set_data(
+            user, {"seq": [track["id"] for track in item["tracks"]], "label": item["title"]}
+        )
+        self._play_sequence_step(chat_id, user, 0)
+
     def _render_mix(self, chat_id: int, user: dict[str, Any]) -> None:
         lang = self._lang(user)
         user_id = int(user["id"])
@@ -808,7 +934,7 @@ class Bot:
         if not order:
             self.show(chat_id, user, ui.mixes_screen(lang, catalog.playlists(self.db)))
             return
-        self._set_data(user_id, {"seq": order, "label": t(lang, "mixes.auto")})
+        self._set_data(user, {"seq": order, "label": t(lang, "mixes.auto")})
         items = catalog.tracks(self.db, order)
         self.show(
             chat_id,
@@ -834,8 +960,7 @@ class Bot:
         item = catalog.playlist(self.db, playlist_id)
         if not item or not item["tracks"]:
             return
-        user_id = int(user["id"])
-        self._set_data(user_id, {"seq": [t["id"] for t in item["tracks"]], "label": item["title"]})
+        self._set_data(user, {"seq": [t["id"] for t in item["tracks"]], "label": item["title"]})
         self._play_sequence_step(chat_id, user, 0)
 
     def _render_submit(self, chat_id: int, user: dict[str, Any]) -> None:
@@ -933,12 +1058,109 @@ class Bot:
 
     # ----------------------------------------------------------- moderation
     def _render_queue(self, chat_id: int, user: dict[str, Any]) -> None:
+        """The queue is a list of releases, not of loose tracks."""
         lang = self._lang(user)
         if not self.config.is_curator(int(user["id"])):
             self.api.send_message(chat_id, t(lang, "mod.not_curator"))
             return
-        items = catalog.pending(self.db, limit=self.config.limits.page_size)
-        self.show(chat_id, user, ui.queue_screen(lang, items, catalog.pending_total(self.db)))
+        items = catalog.pending_releases(self.db, limit=self.config.limits.page_size)
+        self.show(
+            chat_id,
+            user,
+            ui.release_queue_screen(lang, items, catalog.pending_releases_total(self.db)),
+        )
+
+    def _render_release_review(self, chat_id: int, user: dict[str, Any], release_id: int) -> None:
+        lang = self._lang(user)
+        item = catalog.release(self.db, release_id)
+        if item is None:
+            self._render_queue(chat_id, user)
+            return
+        self.show(chat_id, user, ui.review_release(lang, item))
+
+    def _moderate_release(
+        self, chat_id: int, user: dict[str, Any], ack, verb: str, release_id: int
+    ) -> None:
+        lang = self._lang(user)
+        user_id = int(user["id"])
+        if verb == "ok":
+            published, error = catalog.approve_release(self.db, release_id, user_id)
+            if error:
+                ack(t(lang, f"mod.{error}"), alert=True)
+                return
+            self.engine.invalidate()
+            ack(t(lang, "mod.release_published"))
+            for track_item in (published or {}).get("tracks", []):
+                self._notify_artist(catalog.track(self.db, int(track_item["id"])), approved=True)
+                break  # one message per release, not one per track
+            self._render_queue(chat_id, user)
+        elif verb == "no":
+            self._set_state(user_id, f"relreason:{release_id}")
+            ack()
+            self.show(
+                chat_id,
+                user,
+                ui.Screen(
+                    t(lang, "mod.ask_reason"),
+                    ui.keyboard(
+                        [ui.button(t(lang, "common.skip"), pack("rel", "no0", release_id))],
+                        [ui.button(t(lang, "common.cancel"), pack("nav", "queue"))],
+                    ),
+                ),
+            )
+        elif verb == "no0":
+            self._set_state(user_id)
+            ack(t(lang, "mod.release_rejected"))
+            self._finish_release_rejection(chat_id, user, release_id, "")
+        elif verb == "cov":
+            self._set_state(user_id, f"relcover:{release_id}")
+            ack()
+            self.show(chat_id, user, ui.prompt(lang, t(lang, "mod.ask_cover"), cancel_to="queue"))
+        elif verb == "note":
+            self._set_state(user_id, f"relnote:{release_id}")
+            ack()
+            self.show(chat_id, user, ui.prompt(lang, t(lang, "mod.ask_note"), cancel_to="queue"))
+
+    def _finish_release_rejection(
+        self, chat_id: int, user: dict[str, Any], release_id: int, reason: str
+    ) -> None:
+        lang = self._lang(user)
+        item = catalog.reject_release(self.db, release_id, int(user["id"]), reason)
+        self.engine.invalidate()
+        if item and item["tracks"]:
+            self._notify_artist(
+                catalog.track(self.db, int(item["tracks"][0]["id"])), approved=False
+            )
+        self.api.send_message(chat_id, t(lang, "mod.release_rejected"))
+        self._render_queue(chat_id, user)
+
+    def _on_photo(self, chat_id: int, user: dict[str, Any], message: dict[str, Any]) -> None:
+        """A picture is only ever meaningful as artwork, and only when asked for."""
+        lang = self._lang(user)
+        user_id = int(user["id"])
+        state = user.get("state") or ""
+        kind, _, argument = state.partition(":")
+        if kind not in ("relcover", "covr") or not argument.isdigit():
+            return
+        release_id = int(argument)
+        if kind == "relcover" and not self.config.is_curator(user_id):
+            return
+        if kind == "covr":
+            owner = self.db.scalar("SELECT submitted_by FROM releases WHERE id=?", (release_id,))
+            if owner is not None and int(owner) != user_id:
+                return
+
+        file_id = _largest_photo(message)
+        if not file_id:
+            self.api.send_message(chat_id, t(lang, "cover.not_image"))
+            return
+        catalog.set_release_cover(self.db, release_id, file_id)
+        self._set_state(user_id)
+        self.api.send_message(chat_id, t(lang, "cover.saved"))
+        if self.config.is_curator(user_id):
+            self._render_release_review(chat_id, user, release_id)
+        else:
+            self._render_submit(chat_id, user)
 
     def _render_review(self, chat_id: int, user: dict[str, Any], track_id: int) -> None:
         lang = self._lang(user)
@@ -1061,6 +1283,17 @@ class Bot:
             conn.execute("DELETE FROM daily WHERE user_id=?", (user_id,))
             conn.execute("DELETE FROM usage WHERE user_id=?", (user_id,))
             conn.execute("UPDATE users SET state=NULL, state_data=NULL WHERE id=?", (user_id,))
+
+
+def _largest_photo(message: dict[str, Any]) -> str | None:
+    """The best available ``file_id`` for an image, however it was sent."""
+    sizes = message.get("photo") or []
+    if sizes:
+        return str(sizes[-1]["file_id"])
+    document = message.get("document") or {}
+    if str(document.get("mime_type") or "").startswith("image/"):
+        return str(document["file_id"])
+    return None
 
 
 def command_menu(lang: str) -> list[dict[str, str]]:

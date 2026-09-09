@@ -85,13 +85,25 @@ def numbered(items: Sequence[Any], action: str, per_row: int = 5) -> list[list[d
 
 
 class Screen:
-    """A rendered screen: text plus an optional keyboard."""
+    """A rendered screen: text, an optional keyboard, an optional cover.
 
-    __slots__ = ("text", "markup")
+    When ``photo`` is set the screen is a picture with the text as its caption.
+    Telegram cannot edit a text message into a photo message, so a photo screen
+    always replaces the previous one rather than editing it — which is why only
+    release pages use it, and why the caption has to fit ``MAX_CAPTION``.
+    """
 
-    def __init__(self, text: str, markup: dict[str, Any] | None = None):
+    __slots__ = ("text", "markup", "photo")
+
+    def __init__(
+        self,
+        text: str,
+        markup: dict[str, Any] | None = None,
+        photo: str | None = None,
+    ):
         self.text = text
         self.markup = markup
+        self.photo = photo
 
     def as_tuple(self) -> tuple[str, dict[str, Any] | None]:
         return self.text, self.markup
@@ -212,7 +224,13 @@ def home(
         else:
             lines.append(t(lang, "home.today_done"))
     lines.append(
-        t(lang, "home.catalogue", tracks=counts.get("tracks", 0), artists=counts.get("artists", 0))
+        t(
+            lang,
+            "home.catalogue",
+            releases=counts.get("releases", 0),
+            tracks=counts.get("tracks", 0),
+            artists=counts.get("artists", 0),
+        )
     )
     rows = [
         [button(t(lang, "nav.today"), pack("nav", "today"))],
@@ -221,17 +239,18 @@ def home(
             button(t(lang, "nav.search"), pack("nav", "search")),
         ],
         [
-            button(t(lang, "nav.library"), pack("nav", "library")),
+            button(t(lang, "nav.releases"), pack("nav", "releases")),
             button(t(lang, "nav.artists"), pack("nav", "artists")),
         ],
         [
+            button(t(lang, "nav.library"), pack("nav", "library")),
             button(t(lang, "nav.mixes"), pack("nav", "mixes")),
-            button(t(lang, "nav.submit"), pack("nav", "submit")),
         ],
         [
+            button(t(lang, "nav.submit"), pack("nav", "submit")),
             button(t(lang, "nav.settings"), pack("nav", "settings")),
-            button(t(lang, "nav.help"), pack("nav", "help")),
         ],
+        [button(t(lang, "nav.help"), pack("nav", "help"))],
     ]
     if is_curator:
         label = t(lang, "nav.queue")
@@ -403,6 +422,75 @@ def artist_screen(
     return Screen("\n".join(lines), keyboard(*rows))
 
 
+def kind_label(lang: str, kind: str) -> str:
+    return t(lang, f"release.{kind or 'single'}")
+
+
+def release_line(index: int | None, item: dict[str, Any], lang: str) -> str:
+    prefix = f"{index} · " if index is not None else ""
+    count = item.get("n") or item.get("total") or 0
+    bits = [kind_label(lang, item.get("kind", ""))]
+    if item.get("year"):
+        bits.append(str(item["year"]))
+    if count:
+        bits.append(str(count))
+    return (
+        f"{prefix}{esc(item.get('artist'))} — <b>{esc(item.get('title'))}</b>"
+        f"  <i>{esc(' · '.join(bits))}</i>"
+    )
+
+
+def releases_screen(lang: str, items: Sequence[dict[str, Any]]) -> Screen:
+    lines = [f"<b>{t(lang, 'releases.title')}</b>", t(lang, "releases.intro"), ""]
+    if not items:
+        lines.append(t(lang, "release.none"))
+    for index, item in enumerate(items, start=1):
+        lines.append(release_line(index, item, lang))
+    rows: list[Sequence[dict[str, str]]] = list(numbered([item["id"] for item in items], "rl"))
+    rows.append([button(t(lang, "nav.home"), pack("nav", "home"))])
+    return Screen("\n".join(lines), keyboard(*rows))
+
+
+def release_screen(lang: str, item: dict[str, Any]) -> Screen:
+    """A release page: artwork, tracklist, and one tap per track.
+
+    ``Play it through`` hands the whole release to the sequence player, which
+    still advances only when the listener asks it to.
+    """
+    header = [
+        f"<b>{esc(item['title'])}</b>",
+        f"{esc(item['artist'])} · {kind_label(lang, item.get('kind', ''))}"
+        + (f" · {item['year']}" if item.get("year") else "")
+        + (f" · {hms(item.get('duration'))}" if item.get("duration") else ""),
+    ]
+    if (item.get("note") or "").strip():
+        header.append("")
+        header.append(f"<blockquote>{esc(item['note'])}</blockquote>")
+    header.append("")
+    for track in item["tracks"]:
+        number = track.get("track_no") or ""
+        header.append(
+            f"{number} · <b>{esc(track['title'])}</b>  <code>{hms(track.get('duration'))}</code>"
+        )
+
+    rows: list[Sequence[dict[str, str]]] = list(
+        numbered([track["id"] for track in item["tracks"]], "play")
+    )
+    if item["tracks"]:
+        rows.append([button(t(lang, "release.play_all"), pack("relall", item["id"]))])
+    rows.append(
+        [
+            button(t(lang, "track.artist"), pack("artist", item["artist_id"])),
+            button(t(lang, "nav.home"), pack("nav", "home")),
+        ]
+    )
+    text = "\n".join(header)
+    cover = item.get("cover_file_id")
+    if cover:
+        return Screen(text[: MAX_CAPTION - 1], keyboard(*rows), photo=str(cover))
+    return Screen(text, keyboard(*rows))
+
+
 def mixes_screen(lang: str, curated: Sequence[dict[str, Any]]) -> Screen:
     lines = [f"<b>{t(lang, 'mixes.title')}</b>", "", t(lang, "mixes.auto_hint")]
     rows: list[Sequence[dict[str, str]]] = [[button(t(lang, "mixes.auto"), pack("mix", "auto"))]]
@@ -530,6 +618,77 @@ def review_buttons(lang: str, track_id: int) -> dict[str, Any]:
         ],
         [button(t(lang, "nav.queue"), pack("nav", "queue"))],
     )
+
+
+def review_release(lang: str, item: dict[str, Any]) -> Screen:
+    """The moderation card for a whole release.
+
+    Shown as the artwork when there is any, because "does this have a usable
+    cover" is one of the questions the curator is answering.
+    """
+    lines = [
+        f"<b>{esc(item['title'])}</b>",
+        f"{esc(item['artist'])} · {kind_label(lang, item.get('kind', ''))}"
+        + (f" · {item['year']}" if item.get("year") else ""),
+        "",
+    ]
+    for track in item["tracks"]:
+        flags = quality_summary({"quality": _json_like(track.get("quality"))}, lang)
+        mark = "·" if track["status"] == "pending" else "×"
+        lines.append(
+            f"{track.get('track_no') or ''} {mark} {esc(track['title'])}"
+            f"  <code>{hms(track.get('duration'))}</code>"
+            + (f"\n    <i>{esc(flags)}</i>" if flags else "")
+        )
+    blockers = item.get("blockers") or []
+    if blockers:
+        lines.append("")
+        lines.append("<b>" + esc(" · ".join(t(lang, f"mod.{b}") for b in blockers)) + "</b>")
+
+    rows: list[Sequence[dict[str, str]]] = []
+    if not blockers:
+        rows.append([button(t(lang, "mod.publish_release"), pack("rel", "ok", item["id"]))])
+    rows.append(
+        [
+            button(t(lang, "mod.cover"), pack("rel", "cov", item["id"])),
+            button(t(lang, "mod.note"), pack("rel", "note", item["id"])),
+            button(t(lang, "mod.reject_release"), pack("rel", "no", item["id"])),
+        ]
+    )
+    rows.append([button(f"{t(lang, 'nav.queue')}", pack("nav", "queue"))])
+    text = "\n".join(lines)
+    cover = item.get("cover_file_id")
+    if cover:
+        return Screen(text[: MAX_CAPTION - 1], keyboard(*rows), photo=str(cover))
+    return Screen(text, keyboard(*rows))
+
+
+def _json_like(value: Any) -> dict:
+    if isinstance(value, dict):
+        return value
+    try:
+        import json
+
+        parsed = json.loads(value or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def release_queue_screen(lang: str, items: Sequence[dict[str, Any]], total: int) -> Screen:
+    lines = [f"<b>{t(lang, 'mod.title')}</b>", t(lang, "mod.count", count=total), ""]
+    if not items:
+        lines.append(t(lang, "mod.empty"))
+    for index, item in enumerate(items, start=1):
+        warning = "  [!]" if item.get("blockers") else ""
+        lines.append(
+            release_line(index, item, lang)
+            + f"  <i>{esc(t(lang, 'mod.waiting_tracks', n=item.get('waiting', 0), total=item.get('total', 0)))}</i>"
+            + warning
+        )
+    rows: list[Sequence[dict[str, str]]] = list(numbered([item["id"] for item in items], "rev"))
+    rows.append([button(t(lang, "nav.home"), pack("nav", "home"))])
+    return Screen("\n".join(lines), keyboard(*rows))
 
 
 def stats_screen(lang: str, report: dict[str, Any]) -> Screen:

@@ -19,7 +19,7 @@ from typing import Any
 
 log = logging.getLogger("tonearm.db")
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 #: Applied to every connection. ``foreign_keys`` is per-connection in SQLite,
 #: which is the usual reason constraints appear to be silently ignored.
@@ -32,7 +32,10 @@ PRAGMAS = (
     "PRAGMA cache_size=-16000",
 )
 
-MIGRATIONS: list[str] = [
+#: One entry per schema version. A plain string is executed as a script; a
+#: callable receives the connection and drives its own statements, which is
+#: what a step with a data backfill needs in order to stay atomic.
+MIGRATIONS: list = [
     # ---------------------------------------------------------------- v1
     """
     CREATE TABLE users (
@@ -190,6 +193,115 @@ MIGRATIONS: list[str] = [
 ]
 
 
+def _migration_2(conn: sqlite3.Connection) -> None:
+    """Releases.
+
+    A track is never loose: it belongs to a single, an EP or an album, the
+    release carries the artwork, and the release is the unit a curator accepts
+    or declines.
+
+    This step is a function rather than a SQL string because it ends in a
+    backfill that needs Python's folding rules. Being a function also means the
+    schema change and the data move share one transaction — ``executescript``
+    would have committed the DDL before the backfill could fail.
+    """
+    conn.execute(
+        """
+        CREATE TABLE releases (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            artist_id     INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+            title         TEXT    NOT NULL,
+            key           TEXT    NOT NULL,
+            kind          TEXT    NOT NULL DEFAULT 'single',
+            year          INTEGER,
+            cover_file_id TEXT,
+            note          TEXT,
+            status        TEXT    NOT NULL DEFAULT 'pending',
+            submitted_by  INTEGER,
+            submitted_at  INTEGER NOT NULL,
+            reviewed_by   INTEGER,
+            reviewed_at   INTEGER,
+            reject_reason TEXT,
+            published_at  INTEGER
+        )
+        """
+    )
+    conn.execute("CREATE UNIQUE INDEX releases_key ON releases(artist_id, key)")
+    conn.execute("CREATE INDEX releases_status ON releases(status, published_at)")
+    conn.execute(
+        "ALTER TABLE tracks ADD COLUMN release_id INTEGER REFERENCES releases(id) ON DELETE CASCADE"
+    )
+    conn.execute("ALTER TABLE tracks ADD COLUMN track_no INTEGER")
+    conn.execute("CREATE INDEX tracks_release ON tracks(release_id, track_no)")
+    _backfill_releases(conn)
+
+
+MIGRATIONS.append(_migration_2)
+
+
+def _backfill_releases(conn: sqlite3.Connection) -> None:
+    """Give every pre-v2 track a release.
+
+    Tracks are grouped by ``(artist, album)`` using the same folded key the
+    catalogue uses elsewhere, so ``Аквариум`` and ``Akvarium`` land in one
+    release. A track with no album becomes a single named after itself.
+    """
+    from . import metadata
+
+    rows = conn.execute(
+        "SELECT id, artist_id, title, album, year, cover_file_id, status, "
+        "submitted_by, submitted_at, reviewed_by, reviewed_at, published_at "
+        "FROM tracks ORDER BY id"
+    ).fetchall()
+
+    seen: dict[tuple, int] = {}
+    for row in rows:
+        title = (row["album"] or "").strip() or row["title"]
+        key = metadata.key_of(title) or metadata.key_of(row["title"]) or f"r{row['id']}"
+        identity = (row["artist_id"], key)
+        release_id = seen.get(identity)
+        if release_id is None:
+            cursor = conn.execute(
+                "INSERT INTO releases(artist_id, title, key, kind, year, cover_file_id, "
+                "status, submitted_by, submitted_at, reviewed_by, reviewed_at, published_at) "
+                "VALUES(?,?,?,'single',?,?,?,?,?,?,?,?)",
+                (
+                    row["artist_id"],
+                    title,
+                    key,
+                    row["year"],
+                    row["cover_file_id"],
+                    row["status"],
+                    row["submitted_by"],
+                    row["submitted_at"],
+                    row["reviewed_by"],
+                    row["reviewed_at"],
+                    row["published_at"],
+                ),
+            )
+            release_id = int(cursor.lastrowid)
+            seen[identity] = release_id
+        conn.execute("UPDATE tracks SET release_id=? WHERE id=?", (release_id, row["id"]))
+
+    conn.execute(
+        "UPDATE tracks SET track_no = (SELECT COUNT(*) FROM tracks t2 "
+        "WHERE t2.release_id = tracks.release_id AND t2.id <= tracks.id) "
+        "WHERE release_id IS NOT NULL"
+    )
+    conn.execute(
+        "UPDATE releases SET cover_file_id = ("
+        "  SELECT t.cover_file_id FROM tracks t WHERE t.release_id = releases.id "
+        "  AND t.cover_file_id IS NOT NULL LIMIT 1) "
+        "WHERE cover_file_id IS NULL"
+    )
+    conn.execute(
+        "UPDATE releases SET kind = CASE "
+        "  WHEN (SELECT COUNT(*) FROM tracks WHERE release_id = releases.id) = 1 THEN 'single' "
+        "  WHEN (SELECT COUNT(*) FROM tracks WHERE release_id = releases.id) <= 6 THEN 'ep' "
+        "  ELSE 'album' END"
+    )
+
+
 def now() -> int:
     """Whole seconds since the epoch, used for every timestamp column."""
     return int(time.time())
@@ -234,20 +346,32 @@ class Database:
             )
         with self._write_lock:
             for index in range(current, SCHEMA_VERSION):
-                log.info("applying schema migration %d", index + 1)
-                # executescript() commits any open transaction first, so the
-                # transaction has to live inside the script itself.
-                script = (
-                    "BEGIN;\n"
-                    + MIGRATIONS[index]
-                    + f"\nPRAGMA user_version={index + 1};\nCOMMIT;\n"
-                )
-                try:
-                    conn.executescript(script)
-                except Exception:
-                    if conn.in_transaction:
-                        conn.executescript("ROLLBACK;")
-                    raise
+                version = index + 1
+                step = MIGRATIONS[index]
+                log.info("applying schema migration %d", version)
+                if callable(step):
+                    # A callable step drives its own statements, so schema and
+                    # data changes commit or roll back together.
+                    conn.execute("BEGIN")
+                    try:
+                        step(conn)
+                        conn.execute(f"PRAGMA user_version={version}")
+                        conn.execute("COMMIT")
+                    except Exception:
+                        if conn.in_transaction:
+                            conn.execute("ROLLBACK")
+                        raise
+                else:
+                    # executescript() commits any open transaction first, so
+                    # the transaction has to live inside the script itself.
+                    try:
+                        conn.executescript(
+                            "BEGIN;\n" + step + f"\nPRAGMA user_version={version};\nCOMMIT;\n"
+                        )
+                    except Exception:
+                        if conn.in_transaction:
+                            conn.executescript("ROLLBACK;")
+                        raise
 
     # --------------------------------------------------------------- access
     def query(self, sql: str, args: Sequence[Any] = ()) -> list[sqlite3.Row]:
@@ -310,6 +434,9 @@ class Database:
         return {
             "users": int(self.scalar("SELECT COUNT(*) FROM users", default=0)),
             "artists": int(self.scalar("SELECT COUNT(*) FROM artists", default=0)),
+            "releases": int(
+                self.scalar("SELECT COUNT(*) FROM releases WHERE status='approved'", default=0)
+            ),
             "approved": int(
                 self.scalar("SELECT COUNT(*) FROM tracks WHERE status='approved'", default=0)
             ),

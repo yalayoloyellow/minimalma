@@ -67,8 +67,8 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "home.catalogue": {
-        "en": "{tracks} tracks · {artists} artists",
-        "ru": "{tracks} треков · {artists} артистов",
+        "en": "{releases} releases · {tracks} tracks · {artists} artists",
+        "ru": "{releases} релизов · {tracks} треков · {artists} артистов",
     },
     "home.today_left": {
         "en": "Today · {left} of {total} left",
@@ -317,6 +317,68 @@ STRINGS: dict[str, dict[str, str]] = {
             "/today · /discover · /search · /library · /submit · /settings"
         ),
     },
+    # ------------------------------------------------------------ releases
+    "nav.releases": {"en": "Releases", "ru": "Релизы"},
+    "releases.title": {"en": "RELEASES", "ru": "РЕЛИЗЫ"},
+    "releases.intro": {
+        "en": "Singles, EPs and albums, newest first.",
+        "ru": "Синглы, EP и альбомы, свежие сверху.",
+    },
+    "release.single": {"en": "single", "ru": "сингл"},
+    "release.ep": {"en": "EP", "ru": "EP"},
+    "release.album": {"en": "album", "ru": "альбом"},
+    "release.tracks": {"en": "{count} tracks", "ru": "{count} треков"},
+    "release.play_all": {"en": "Play it through", "ru": "Слушать целиком"},
+    "release.open": {"en": "Release", "ru": "Релиз"},
+    "release.none": {"en": "No releases yet.", "ru": "Релизов пока нет."},
+    # --------------------------------------------------------------- cover
+    "cover.needed": {
+        "en": (
+            "This release has no artwork yet. Send a square image and it becomes "
+            "the cover — nothing is published without one."
+        ),
+        "ru": (
+            "У релиза пока нет обложки. Пришлите квадратную картинку — она станет "
+            "обложкой. Без неё ничего не публикуется."
+        ),
+    },
+    "cover.saved": {"en": "Artwork saved.", "ru": "Обложка сохранена."},
+    "cover.send": {"en": "Send the artwork", "ru": "Прислать обложку"},
+    "cover.not_image": {
+        "en": "Send it as a photo or an image file.",
+        "ru": "Пришлите картинкой или файлом изображения.",
+    },
+    "submit.release_hint": {
+        "en": (
+            "Sending several tracks of one release? Send them one after another — "
+            "the album tag groups them. A track with no album becomes a single."
+        ),
+        "ru": (
+            "Присылаете несколько треков одного релиза? Шлите подряд — они "
+            "группируются по тегу альбома. Трек без альбома становится синглом."
+        ),
+    },
+    "submit.in_release": {
+        "en": "Release: {title} · track {n}",
+        "ru": "Релиз: {title} · трек {n}",
+    },
+    # ---------------------------------------------------- release moderation
+    "mod.release": {"en": "Release", "ru": "Релиз"},
+    "mod.publish_release": {"en": "Publish the release", "ru": "Опубликовать релиз"},
+    "mod.reject_release": {"en": "Decline the release", "ru": "Отклонить релиз"},
+    "mod.cover": {"en": "Artwork", "ru": "Обложка"},
+    "mod.ask_cover": {
+        "en": "Send an image. It becomes this release's cover.",
+        "ru": "Пришлите картинку. Она станет обложкой этого релиза.",
+    },
+    "mod.no_cover": {
+        "en": "No artwork — a release cannot be published without it.",
+        "ru": "Нет обложки — без неё релиз опубликовать нельзя.",
+    },
+    "mod.no_tracks": {"en": "This release has no tracks.", "ru": "В релизе нет треков."},
+    "mod.release_published": {"en": "Release published.", "ru": "Релиз опубликован."},
+    "mod.release_rejected": {"en": "Release declined.", "ru": "Релиз отклонён."},
+    "mod.waiting_tracks": {"en": "{n} of {total} waiting", "ru": "ждут {n} из {total}"},
     # ------------------------------------------------------------- digest
     "digest.title": {"en": "This week", "ru": "За неделю"},
     "digest.body": {

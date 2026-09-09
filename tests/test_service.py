@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from tonearm import app, catalog, cli, i18n, ui
+from tonearm import VERSION_LABEL, app, catalog, cli, i18n, ui
 from tonearm import config as config_mod
 from tonearm.config import Config
-from tonearm.db import Database
+from tonearm.db import SCHEMA_VERSION, Database
 
 from . import fake
 from .conftest import ARTIST, LISTENER
@@ -83,7 +83,7 @@ class TestDatabase:
         path = tmp_path / "x.db"
         Database(path)
         second = Database(path)
-        assert second.scalar("PRAGMA user_version") == 1
+        assert second.scalar("PRAGMA user_version") == SCHEMA_VERSION
         assert second.integrity() == "ok"
 
     def test_a_newer_schema_is_refused_rather_than_corrupted(self, tmp_path: Path) -> None:
@@ -215,11 +215,23 @@ class TestCommandLine:
     def test_version(self, capsys: pytest.CaptureFixture) -> None:
         with pytest.raises(SystemExit):
             cli.main(["--version"])
-        assert "0.1.0-alpha" in capsys.readouterr().out
+        assert VERSION_LABEL in capsys.readouterr().out
 
-    def test_no_arguments_prints_help(self, capsys: pytest.CaptureFixture, tmp_path: Path) -> None:
+    def test_no_arguments_prints_help_without_the_desk(
+        self, capsys: pytest.CaptureFixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cli, "_desk_available", lambda: False)
         assert cli.main(self._home(tmp_path)) == 0
         assert "usage" in capsys.readouterr().out
+
+    def test_no_arguments_opens_the_desk_when_it_is_present(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        opened: list = []
+        monkeypatch.setattr(cli, "_desk_available", lambda: True)
+        monkeypatch.setattr(cli, "_desk", lambda args, cfg: opened.append(args.command) or 0)
+        assert cli.main(self._home(tmp_path)) == 0
+        assert opened == ["desk"]
 
     def test_run_without_a_token_fails_loudly(
         self, capsys: pytest.CaptureFixture, tmp_path: Path
