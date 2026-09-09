@@ -1,0 +1,32 @@
+name: Feature request
+description: Propose a change.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve
+      description: >
+        Describe the situation that is bad today, for a listener, an artist or a
+        curator. Not the feature — the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints
+      description: >
+        See the README table and CONTRIBUTING. Proposals that fail these are
+        usually declined.
+      options:
+        - label: It adds no runtime dependency.
+        - label: It does not introduce autoplay, an endless feed, streaks, badges, public play counters, or unsolicited notifications.
+        - label: It does not make moderation optional.

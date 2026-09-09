@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tonearm"
+version = "0.1.0a1"
+description = "A curated music streaming service that runs entirely inside a Telegram bot."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+keywords = ["telegram", "bot", "music", "streaming", "curation", "recommender"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications :: Chat",
+    "Topic :: Multimedia :: Sound/Audio",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/yalayoloyellow/tonearm"
+Source = "https://github.com/yalayoloyellow/tonearm"
+Issues = "https://github.com/yalayoloyellow/tonearm/issues"
+Changelog = "https://github.com/yalayoloyellow/tonearm/blob/main/CHANGELOG.md"
+
+[project.scripts]
+tonearm = "tonearm.cli:main"
+
+[tool.setuptools]
+packages = ["tonearm"]
+
+[tool.setuptools.package-data]
+tonearm = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+    "E501",    # formatting is ruff format's job, not the linter's
+    "B008",
+    "SIM108",
+    "SIM105",  # contextlib.suppress is slower and no clearer for a one-line cleanup
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

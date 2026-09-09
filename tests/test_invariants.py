@@ -1,0 +1,241 @@
+"""Product invariants.
+
+These are not implementation tests. Each one pins a promise made in the README
+that could otherwise be eroded by a well-meaning change. If a future commit
+makes one of these fail, the commit is changing what this product *is*, and it
+should have to say so out loud.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+from tonearm import catalog, handlers, i18n, recommend, ui
+from tonearm.config import Config
+from tonearm.db import Database
+
+from . import fake
+from .conftest import ARTIST, CURATOR, LISTENER
+from .fake import FakeApi
+
+SOURCE = Path(__file__).resolve().parents[1] / "tonearm"
+
+
+class TestNothingPlaysItself:
+    def test_no_audio_is_ever_sent_without_an_explicit_tap(
+        self, bot: handlers.Bot, api: FakeApi, seeded: list[int]
+    ) -> None:
+        """Walk the entire interface. Only play/seq taps may produce audio."""
+        browsing = [
+            "/start",
+            "/today",
+            "/discover",
+            "/library",
+            "/settings",
+            "/help",
+            "/submit",
+            "drone",
+            "ambient",
+        ]
+        for text in browsing:
+            bot.handle(fake.message(LISTENER, text))
+        for data in (
+            "nav|home",
+            "nav|today",
+            "nav|discover",
+            "disc|go",
+            "nav|search",
+            "nav|library",
+            "nav|artists",
+            "nav|mixes",
+            "mix|auto",
+            "nav|settings",
+            "nav|help",
+            f"like|{seeded[0]}",
+            f"similar|{seeded[1]}",
+            "tag|drone",
+        ):
+            bot.handle(fake.callback(LISTENER, data))
+        assert api.audio_sent == [], "something sent audio without being asked"
+
+    def test_one_tap_yields_exactly_one_track(
+        self, bot: handlers.Bot, api: FakeApi, seeded: list[int]
+    ) -> None:
+        for track_id in seeded[:4]:
+            bot.handle(fake.callback(LISTENER, f"play|{track_id}"))
+        assert len(api.audio_sent) == 4
+
+    def test_a_track_card_never_offers_an_endless_continuation(
+        self, bot: handlers.Bot, api: FakeApi, seeded: list[int]
+    ) -> None:
+        """Outside a finite sequence there is no Next button at all."""
+        bot.handle(fake.callback(LISTENER, f"play|{seeded[0]}"))
+        markup = api.audio_sent[0]["reply_markup"]["inline_keyboard"]
+        assert not any(b["callback_data"].startswith("seq|") for row in markup for b in row)
+
+    def test_a_sequence_ends(self, bot: handlers.Bot, api: FakeApi, seeded: list[int]) -> None:
+        bot.handle(fake.callback(LISTENER, "mix|auto"))
+        length = len(bot._data(catalog.get_user(bot.db, LISTENER))["seq"])
+        for index in range(length):
+            bot.handle(fake.callback(LISTENER, f"seq|m|{index}"))
+        last = api.audio_sent[-1]["reply_markup"]["inline_keyboard"]
+        assert not any(b["callback_data"].startswith("seq|") for row in last for b in row)
+
+
+class TestFiniteByDesign:
+    def test_the_daily_selection_cannot_be_re_rolled(
+        self, bot: handlers.Bot, engine: recommend.Engine, seeded: list[int]
+    ) -> None:
+        first = engine.daily_selection(LISTENER)
+        for _ in range(5):
+            bot.handle(fake.callback(LISTENER, "nav|today"))
+        assert engine.daily_selection(LISTENER) == first
+
+    def test_today_ends_with_a_boundary_not_with_more(
+        self, bot: handlers.Bot, api: FakeApi, engine: recommend.Engine, seeded: list[int]
+    ) -> None:
+        for track_id in engine.daily_selection(LISTENER):
+            bot.handle(fake.callback(LISTENER, f"play|{track_id}"))
+        api.clear()
+        bot.handle(fake.callback(LISTENER, "nav|today"))
+        text = api.last_screen()
+        assert "That is all for today" in text
+        assert not api.find_button("play|")
+
+    def test_discovery_is_capped_per_day(
+        self, bot: handlers.Bot, api: FakeApi, db: Database, config: Config, seeded: list[int]
+    ) -> None:
+        for _ in range(config.limits.discover_sessions_per_day + 3):
+            bot.handle(fake.callback(LISTENER, "disc|go"))
+        used = db.scalar(
+            "SELECT discovers FROM usage WHERE user_id=? AND day=?",
+            (LISTENER, recommend.today()),
+        )
+        assert used == config.limits.discover_sessions_per_day
+        assert "used today" in api.last_screen()
+
+    def test_a_discovery_batch_is_small(
+        self, bot: handlers.Bot, api: FakeApi, config: Config, seeded: list[int]
+    ) -> None:
+        bot.handle(fake.callback(LISTENER, "disc|go"))
+        plays = [b for b in api.buttons() if b["callback_data"].startswith("play|")]
+        assert len(plays) <= config.limits.discover_batch
+
+
+class TestNoEngagementTheatre:
+    def test_listeners_never_see_play_counts_or_like_counts(
+        self, bot: handlers.Bot, api: FakeApi, db: Database, seeded: list[int]
+    ) -> None:
+        db.execute("UPDATE tracks SET plays=4242, likes=777, exposures=9999")
+        for data in ("nav|home", "nav|today", "nav|library", "nav|artists", "nav|mixes"):
+            bot.handle(fake.callback(LISTENER, data))
+            assert "4242" not in api.last_screen()
+            assert "777" not in api.last_screen()
+        bot.handle(fake.callback(LISTENER, f"play|{seeded[0]}"))
+        assert "4242" not in api.audio_sent[0]["caption"]
+
+    def test_an_artist_sees_their_own_numbers(
+        self, bot: handlers.Bot, api: FakeApi, db: Database, seeded: list[int]
+    ) -> None:
+        artist_id = int(db.scalar("SELECT artist_id FROM tracks WHERE id=?", (seeded[0],)))
+        db.execute("UPDATE artists SET user_id=? WHERE id=?", (ARTIST, artist_id))
+        db.execute("UPDATE tracks SET plays=12 WHERE artist_id=?", (artist_id,))
+        bot.handle(fake.callback(ARTIST, f"artist|{artist_id}"))
+        assert "24 plays" in api.last_screen()  # two tracks by this artist
+
+    def test_no_streaks_badges_or_urgency_in_any_string(self) -> None:
+        banned = re.compile(
+            r"\b(streak|badge|level up|don'?t miss|hurry|last chance|only today|"
+            r"trending now|going viral|you'?re on fire)\b",
+            re.IGNORECASE,
+        )
+        for key, entry in i18n.STRINGS.items():
+            for lang, text in entry.items():
+                assert not banned.search(text), f"{key}/{lang}: {text!r}"
+
+    def test_no_emoji_in_the_interface(self) -> None:
+        for key, entry in i18n.STRINGS.items():
+            for lang, text in entry.items():
+                for char in text:
+                    assert not (0x1F000 <= ord(char) <= 0x1FAFF), f"{key}/{lang}: {char!r}"
+
+
+class TestOnlySolicitedMessages:
+    def test_the_bot_never_writes_first_except_about_your_own_submission(
+        self, bot: handlers.Bot, api: FakeApi, db: Database
+    ) -> None:
+        bot.handle(fake.message(LISTENER, "/start"))
+        bot.handle(fake.audio_message(ARTIST, "z1", "zz1", title="Mine", performer="A"))
+        track_id = int(db.scalar("SELECT id FROM tracks WHERE file_unique_id='zz1'"))
+        api.clear()
+        bot.handle(fake.callback(CURATOR, f"mod|ok|{track_id}"))
+        recipients = {p["chat_id"] for p in api.of("sendMessage")}
+        # Publishing reaches the artist who submitted it and nobody else.
+        assert LISTENER not in recipients
+        assert ARTIST in recipients
+
+    def test_the_weekly_note_is_opt_in(self, db: Database) -> None:
+        assert db.scalar("SELECT COUNT(*) FROM users WHERE digest=1", default=0) == 0
+        row = db.one("PRAGMA table_info(users)")
+        assert row is not None  # schema exists; default for `digest` is 0
+        columns = {r["name"]: r["dflt_value"] for r in db.query("PRAGMA table_info(users)")}
+        assert columns["digest"] == "0"
+
+
+class TestCurationIsMandatory:
+    def test_auto_approve_is_off_by_default(self) -> None:
+        assert Config(home=Path(".")).auto_approve is False
+
+    def test_a_submission_is_invisible_until_a_human_acts(
+        self, bot: handlers.Bot, engine: recommend.Engine, db: Database
+    ) -> None:
+        bot.handle(fake.audio_message(ARTIST, "q1", "qq1", title="Unreviewed", performer="A"))
+        assert engine.eligible() == []
+        assert engine.daily_selection(LISTENER) == []
+        from tonearm import search as search_mod
+
+        assert search_mod.search(db, "Unreviewed") == []
+
+
+class TestSourceHygiene:
+    def test_no_module_imports_a_third_party_package(self) -> None:
+        """The install story is "clone and run". Keep it that way.
+
+        Rather than maintain a list of blessed module names, resolve every
+        import and require that it is built in or lives under the standard
+        library directory. A new stdlib import needs no change here; a
+        dependency fails immediately.
+        """
+        import importlib.util
+        import sys
+        import sysconfig
+
+        stdlib_dir = Path(sysconfig.get_paths()["stdlib"]).resolve()
+        imports = re.compile(r"^\s*(?:from|import)\s+([A-Za-z_][\w.]*)", re.MULTILINE)
+
+        for path in sorted(SOURCE.glob("*.py")):
+            for match in imports.finditer(path.read_text(encoding="utf-8")):
+                root = match.group(1).split(".")[0]
+                if root in ("tonearm", "__future__") or root in sys.builtin_module_names:
+                    continue
+                spec = importlib.util.find_spec(root)
+                assert spec is not None, f"{path.name} imports unresolvable {root}"
+                if spec.origin in (None, "built-in", "frozen"):
+                    continue
+                origin = Path(spec.origin).resolve()
+                assert stdlib_dir in origin.parents, (
+                    f"{path.name} imports {root}, which is not in the standard library ({origin})"
+                )
+
+    def test_callback_payloads_fit_telegram_s_limit(self) -> None:
+        # 64 bytes is a hard API limit; long ids and tags are the usual way to
+        # blow past it unnoticed.
+        assert len(ui.pack("mod", "ok", 9_999_999_999).encode()) <= 64
+        assert len(ui.pack("tag", "a" * 40).encode()) <= 64
+        try:
+            ui.pack("tag", "x" * 200)
+        except ValueError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError("oversized callback data was accepted")
