@@ -141,11 +141,6 @@ class TestReading:
             get(base, "/api/track/999999", key)
         assert caught.value.code == 404
 
-    def test_catalogue_search(self, running, seeded) -> None:
-        _desk, base, key = running
-        titles = [i["title"] for i in api_get(base, "/api/catalogue?q=drone", key)["items"]]
-        assert "Untitled III" in titles
-
     def test_artists(self, running, seeded) -> None:
         _desk, base, key = running
         items = api_get(base, "/api/artists", key)["items"]
@@ -220,10 +215,29 @@ class TestCuratorialFields:
                 post(base, path, key, {"title": "Renamed"})
             assert caught.value.code == 404
 
-    def test_withdrawing_a_published_track(self, running, seeded, db: Database) -> None:
+    def test_withdrawing_takes_down_the_whole_release(self, running, seeded, db: Database) -> None:
         _desk, base, key = running
-        post(base, f"/api/withdraw/{seeded[0]}", key, {})
-        assert db.scalar("SELECT status FROM tracks WHERE id=?", (seeded[0],)) == "hidden"
+        release_id = int(db.scalar("SELECT id FROM releases WHERE title='Stairwell'"))
+        assert db.scalar("SELECT COUNT(*) FROM tracks WHERE release_id=?", (release_id,)) == 2
+        post(base, f"/api/withdraw/{release_id}", key, {})
+        assert db.scalar("SELECT status FROM releases WHERE id=?", (release_id,)) == "hidden"
+        assert (
+            db.scalar(
+                "SELECT COUNT(*) FROM tracks WHERE release_id=? AND status='hidden'",
+                (release_id,),
+            )
+            == 2
+        )
+
+    def test_the_catalogue_lists_releases(self, running, seeded, db: Database) -> None:
+        _desk, base, key = running
+        items = api_get(base, "/api/catalogue", key)["items"]
+        assert any(item["title"] == "Stairwell" and item["kind"] == "ep" for item in items)
+
+    def test_a_catalogue_search_folds_tracks_back_to_releases(self, running, seeded) -> None:
+        _desk, base, key = running
+        items = api_get(base, "/api/catalogue?q=drone", key)["items"]
+        assert any(item["title"] == "Winterlight" for item in items)
 
 
 class TestReleases:

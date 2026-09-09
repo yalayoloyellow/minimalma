@@ -17,7 +17,7 @@ from tonearm.db import Database
 
 from . import fake
 from .conftest import ARTIST, CURATOR, LISTENER
-from .fake import FakeApi
+from .fake import FakeApi, id3_file
 
 SOURCE = Path(__file__).resolve().parents[1] / "tonearm"
 
@@ -183,6 +183,51 @@ class TestOnlySolicitedMessages:
         assert row is not None  # schema exists; default for `digest` is 0
         columns = {r["name"]: r["dflt_value"] for r in db.query("PRAGMA table_info(users)")}
         assert columns["digest"] == "0"
+
+
+class TestTheReleaseIsTheUnit:
+    """A single track is never accepted, declined or withdrawn on its own.
+
+    The unit an artist submits is the unit a curator decides on. Anything finer
+    means a curator editing somebody's record.
+    """
+
+    def test_the_core_offers_no_per_track_decision(self) -> None:
+        for name in ("approve", "reject", "hide", "restore_to_queue"):
+            assert not hasattr(catalog, name), f"catalog.{name} decides one track"
+        for name in ("approve_release", "reject_release", "hide_release", "restore_release"):
+            assert hasattr(catalog, name)
+
+    def test_declining_takes_the_whole_release_down(
+        self, bot: handlers.Bot, api: FakeApi, db: Database
+    ) -> None:
+        for index in range(2):
+            api.files[f"w{index}"] = id3_file(title=f"T{index}", artist="Marsh", album="Set")
+            bot.handle(
+                fake.audio_message(
+                    ARTIST, f"w{index}", f"wu{index}", thumbnail=True, file_name=f"{index}.mp3"
+                )
+            )
+        release_id = int(db.scalar("SELECT id FROM releases WHERE title='Set'"))
+        bot.handle(fake.callback(CURATOR, f"rel|ok|{release_id}"))
+        bot.handle(fake.callback(CURATOR, f"rel|no|{release_id}"))
+        bot.handle(fake.callback(CURATOR, f"rel|no0|{release_id}"))
+        statuses = {
+            row["status"]
+            for row in db.query("SELECT status FROM tracks WHERE release_id=?", (release_id,))
+        }
+        assert statuses == {"rejected"}, "a declined release kept live tracks"
+
+    def test_withdrawing_takes_the_whole_release_down(
+        self, db: Database, seeded: list[int]
+    ) -> None:
+        release_id = int(db.scalar("SELECT release_id FROM tracks WHERE id=?", (seeded[0],)))
+        catalog.hide_release(db, release_id, CURATOR)
+        statuses = {
+            row["status"]
+            for row in db.query("SELECT status FROM tracks WHERE release_id=?", (release_id,))
+        }
+        assert statuses == {"hidden"}
 
 
 class TestMeasurementsDoNotJudge:

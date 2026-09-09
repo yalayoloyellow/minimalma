@@ -302,22 +302,35 @@ def api_track(desk: Desk, arg: str | None, _body: dict, _query: dict) -> dict | 
 
 
 def api_catalogue(desk: Desk, _arg: str | None, _body: dict, query: dict) -> dict:
+    """Browse the shelf. Releases, because that is the unit of everything here.
+
+    A text query still searches tracks — that is what a person types — but the
+    results are folded back to the releases holding them.
+    """
     text = (query.get("q") or "").strip()
     status = query.get("status") or "approved"
     limit = _int(query.get("limit"), 60)
+
     if text:
-        ids = [track_id for track_id, _ in search.search(desk.db, text, limit=limit)]
-        items = catalog.tracks(desk.db, ids)
+        ids = [track_id for track_id, _ in search.search(desk.db, text, limit=limit * 2)]
+        seen: dict[int, None] = {}
+        for item in catalog.tracks(desk.db, ids):
+            if item.get("release_id"):
+                seen.setdefault(int(item["release_id"]), None)
+        rows = [catalog.release(desk.db, release_id) for release_id in list(seen)[:limit]]
+        items = [row for row in rows if row]
     elif status == "approved":
-        items = catalog.newest(desk.db, limit=limit)
+        items = catalog.newest_releases(desk.db, limit=limit)
     else:
         rows = desk.db.query(
-            "SELECT t.*, a.name AS artist FROM tracks t JOIN artists a ON a.id=t.artist_id "
-            "WHERE t.status=? ORDER BY t.submitted_at DESC LIMIT ?",
+            "SELECT r.*, a.name AS artist, "
+            "  (SELECT COUNT(*) FROM tracks t WHERE t.release_id=r.id) AS n "
+            "FROM releases r JOIN artists a ON a.id = r.artist_id "
+            "WHERE r.status=? ORDER BY r.reviewed_at DESC LIMIT ?",
             (status, limit),
         )
         items = [dict(row) for row in rows]
-    return {"items": [_row_payload(item) for item in items]}
+    return {"items": [_release_row(item) for item in items]}
 
 
 def api_artists(desk: Desk, _arg: str | None, _body: dict, query: dict) -> dict:
@@ -384,11 +397,11 @@ def api_restore_release(desk: Desk, arg: str | None, _body: dict, _query: dict) 
 
 
 def api_withdraw(desk: Desk, arg: str | None, _body: dict, _query: dict) -> dict:
-    """Take a published track out of circulation without deleting its history."""
-    track_id = int(arg or 0)
-    catalog.hide(desk.db, track_id, desk.config.owner or 0)
+    """Take a published release out of circulation, keeping its history."""
+    release_id = int(arg or 0)
+    item = catalog.hide_release(desk.db, release_id, desk.config.owner or 0)
     desk.engine.invalidate()
-    return {"ok": True, "track": _track_payload(desk, track_id)}
+    return {"ok": bool(item), "release": api_release(desk, arg, {}, {})}
 
 
 def api_playlists(desk: Desk, _arg: str | None, _body: dict, _query: dict) -> dict:

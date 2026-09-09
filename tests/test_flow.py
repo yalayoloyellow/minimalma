@@ -357,10 +357,11 @@ class TestListening:
         bot.handle(fake.callback(LISTENER, f"similar|{drift}"))
         assert "Second Drift" in api.last_screen()
 
-    def test_a_withdrawn_track_cannot_be_played(
+    def test_a_withdrawn_release_cannot_be_played(
         self, bot: handlers.Bot, api: FakeApi, seeded: list[int], db: Database
     ) -> None:
-        catalog.hide(db, seeded[0], CURATOR)
+        release_id = int(db.scalar("SELECT release_id FROM tracks WHERE id=?", (seeded[0],)))
+        catalog.hide_release(db, release_id, CURATOR)
         bot.handle(fake.callback(LISTENER, f"play|{seeded[0]}"))
         assert api.audio_sent == []
 

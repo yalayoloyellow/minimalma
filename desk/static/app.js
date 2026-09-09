@@ -87,7 +87,6 @@ const S = {
   catalogue: [], catalogueQuery: "", catalogueStatus: "approved",
   artists: [], artistQuery: "", artist: null,
   playlists: [], playlist: null,
-  track: null,
   draftTags: [],
   busy: false,
   undo: null
@@ -249,7 +248,9 @@ function releaseCard(release, queued) {
     ? `<button class="btn primary" data-act="approve_release">${esc(t("publish"))}</button>
        <button class="btn danger" data-act="reject_release">${esc(t("decline"))}</button>
        <button class="btn" data-act="save_release">${esc(t("save"))}</button>`
-    : `<button class="btn" data-act="save_release">${esc(t("save"))}</button>`;
+    : `<button class="btn" data-act="save_release">${esc(t("save"))}</button>
+       ${release.status === "approved"
+         ? `<button class="btn danger" data-act="withdraw">${esc(t("withdraw"))}</button>` : ""}`;
 
   return `<div class="card" data-release-card="${release.id}">
     <h2>${esc(release.title)}</h2>
@@ -284,7 +285,7 @@ function releaseCard(release, queued) {
 
 function viewCatalogue() {
   const list = S.catalogue.length
-    ? S.catalogue.map((item) => trackRow(item, S.track && S.track.id === item.id)).join("")
+    ? S.catalogue.map((item) => releaseRow(item, S.release && S.release.id === item.id)).join("")
     : `<div class="empty">${esc(t("empty"))}</div>`;
   const tabs = ["approved", "rejected", "hidden"].map((status) =>
     `<button class="btn small ${S.catalogueStatus === status ? "primary" : ""}" data-status="${status}">${esc(t("status")[status])}</button>`
@@ -296,27 +297,8 @@ function viewCatalogue() {
     </div>
     <div class="body">
       <div class="pane list">${list}</div>
-      <div class="pane detail">${S.track ? trackCard(S.track) : `<div class="empty">${esc(t("pick"))}</div>`}</div>
+      <div class="pane detail">${S.release ? releaseCard(S.release, false) : `<div class="empty">${esc(t("pick"))}</div>`}</div>
     </div>`;
-}
-
-function trackCard(track) {
-  return `<div class="card" data-card="${track.id}">
-    <h2>${esc(track.title)}</h2>
-    <div class="by">${esc(track.artist)} · ${hms(track.duration)}</div>
-    <div class="meta">${esc([track.release_title, track.year].filter(Boolean).join(" · "))}</div>
-    <div class="meta">${track.plays} ${esc(t("plays"))} · ${track.likes} ${esc(t("saves"))} · ${track.exposures} ${esc(t("shown"))}</div>
-    <audio controls preload="none" src="${media("audio", track.id)}"></audio>
-    <div class="section"><label>${esc(t("tags"))}</label>
-      <div class="tags">${(track.tags || []).map((tag) => `<span class="tag">${esc(tag)}</span>`).join("")
-        || `<span class="muted-dash">—</span>`}</div>
-    </div>
-    ${(track.note || "").trim() ? `<div class="section"><label>${esc(t("note"))}</label>
-      <div class="note">${esc(track.note)}</div></div>` : ""}
-    <div class="actions">
-      ${track.status === "approved" ? `<button class="btn danger" data-act="withdraw">${esc(t("withdraw"))}</button>` : ""}
-    </div>
-  </div>`;
 }
 
 function viewArtists() {
@@ -426,14 +408,9 @@ async function loadPlaylists() {
   S.playlists = (await api("/api/playlists")).items;
 }
 
-async function selectTrack(id, redraw = true) {
-  S.track = await api(`/api/track/${id}`);
-  if (redraw) render();
-}
-
 async function go(view) {
   S.view = view;
-  S.track = null;
+  S.release = null;
   S.artist = null;
   S.playlist = null;
   try {
@@ -482,6 +459,9 @@ async function actRelease(action) {
     } else if (action === "reject_release") {
       await api(`/api/reject_release/${release.id}`, { reason: fieldValue("[data-reason]") });
       offerUndo(release, t("rejected"));
+    } else if (action === "withdraw") {
+      await api(`/api/withdraw/${release.id}`, {});
+      toast(t("hidden"));
     } else if (action === "save_release") {
       await saveRelease(false);
       S.busy = false;
@@ -497,7 +477,8 @@ async function actRelease(action) {
   try {
     await refreshState();
     S.release = null;
-    await loadQueue();
+    if (S.view === "queue") await loadQueue();
+    else await loadCatalogue();
   } catch (error) {
     toast(error.message);
   }
@@ -520,23 +501,6 @@ function offerUndo(release, message) {
   });
 }
 
-async function actTrack(action) {
-  if (S.busy || !S.track) return;
-  S.busy = true;
-  try {
-    if (action === "withdraw") {
-      await api(`/api/withdraw/${S.track.id}`, {});
-      toast(t("hidden"));
-      S.track = null;
-      await loadCatalogue();
-    }
-  } catch (error) {
-    toast(t("failed") + ": " + error.message);
-  }
-  S.busy = false;
-  render();
-}
-
 function move(delta) {
   if (S.view === "queue") {
     if (!S.queue.length) return;
@@ -546,9 +510,11 @@ function move(delta) {
     return;
   }
   if (S.view === "catalogue" && S.catalogue.length) {
-    const index = S.track ? S.catalogue.findIndex((i) => i.id === S.track.id) : -1;
+    const index = S.release ? S.catalogue.findIndex((i) => i.id === S.release.id) : -1;
     const next = Math.max(0, Math.min(S.catalogue.length - 1, index + delta));
-    if (next !== index || index < 0) selectTrack(S.catalogue[next].id).catch((e) => toast(e.message));
+    if (next !== index || index < 0) {
+      selectRelease(S.catalogue[next].id).catch((e) => toast(e.message));
+    }
   }
 }
 
@@ -556,7 +522,7 @@ function move(delta) {
 
 document.addEventListener("click", async (event) => {
   const target = event.target.closest(
-    "[data-view],[data-release],[data-track],[data-artist],[data-playlist]," +
+    "[data-view],[data-release],[data-artist],[data-playlist]," +
     "[data-act],[data-tag],[data-untag],[data-bot],[data-status],[data-listdel]," +
     "[data-listpub]"
   );
@@ -564,14 +530,13 @@ document.addEventListener("click", async (event) => {
   try {
     if (target.dataset.view !== undefined) return void go(target.dataset.view);
     if (target.dataset.release) return void selectRelease(Number(target.dataset.release));
-    if (target.dataset.track) return void selectTrack(Number(target.dataset.track));
     if (target.dataset.bot) {
       S.state.bot = await api(`/api/bot/${target.dataset.bot}`, {});
       return void render();
     }
     if (target.dataset.status) {
       S.catalogueStatus = target.dataset.status;
-      S.track = null;
+      S.release = null;
       await loadCatalogue();
       return void render();
     }
@@ -609,7 +574,6 @@ document.addEventListener("click", async (event) => {
       await loadPlaylists();
       return void render();
     }
-    if (act === "withdraw") return void actTrack(act);
     if (act) return void actRelease(act);
   } catch (error) {
     toast(error.message);
@@ -641,7 +605,7 @@ document.addEventListener("keydown", async (event) => {
     }
     if (event.key === "Enter" && event.target.matches('[data-search="catalogue"]')) {
       S.catalogueQuery = event.target.value;
-      S.track = null;
+      S.release = null;
       try { await loadCatalogue(); } catch (error) { toast(error.message); }
       render();
       const field = document.querySelector('[data-search="catalogue"]');

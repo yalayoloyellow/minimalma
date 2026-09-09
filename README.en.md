@@ -50,7 +50,9 @@ is corrected in one message. Every submission gets an answer, one per release.
 **The curator** owns *whether it is on the shelf and how it is labelled*. The
 queue holds only complete releases, so nothing opens that cannot be decided.
 Four actions and no more: publish the release, decline it with a reason, set the
-tags, write the note. They cannot rename a release, reorder it or supply its
+tags, write the note — plus withdrawing a published one. **A single track is
+never decided on its own**: the unit an artist submits is the unit a curator
+answers. They cannot rename a release, reorder it or supply its
 artwork — a wrong title is grounds to decline with a reason, not to rewrite
 somebody's record. Tags stay with the curator because they are the station's
 vocabulary and they feed the recommender: an artist tags for promotion, a

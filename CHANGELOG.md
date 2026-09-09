@@ -21,9 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the release.
 - Declining a release now takes down every track in it, not only the waiting
   ones, which removes a state where a declined release kept published tracks.
-- Single-track moderation is gone; a release is accepted or declined whole.
-  `catalog.approve`/`reject` are replaced by `approve_release`/`reject_release`,
-  and `restore_release` replaces the per-track undo.
+- **A single track is never decided on its own** — accepted, declined or
+  withdrawn. `catalog.approve`/`reject`/`hide`/`restore_to_queue` are replaced by
+  `approve_release`/`reject_release`/`hide_release`/`restore_release`, and the
+  desk's catalogue browses releases rather than loose tracks.
 - The desk's write surface is one endpoint, `curate`, accepting `{tags, note}`.
   `setcover`, `edit`, `edit_release`, `approve` and `reject` are removed.
 

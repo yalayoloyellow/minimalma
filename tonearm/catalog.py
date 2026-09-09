@@ -879,13 +879,29 @@ def restore_release(db: Database, release_id: int) -> dict[str, Any] | None:
     return release(db, release_id)
 
 
-def hide(db: Database, track_id: int, curator_id: int) -> None:
-    """Withdraw an already published track without deleting its history."""
-    db.execute(
-        "UPDATE tracks SET status=?, reviewed_by=?, reviewed_at=? WHERE id=?",
-        (STATUS_HIDDEN, curator_id, now(), track_id),
-    )
-    search.remove_track(db, track_id)
+def hide_release(db: Database, release_id: int, curator_id: int) -> dict[str, Any] | None:
+    """Withdraw a published release without deleting its history.
+
+    Release-level like every other decision. A curator never takes down one
+    song out of somebody's record: the unit that was accepted is the unit that
+    can be withdrawn.
+    """
+    item = release(db, release_id)
+    if item is None:
+        return None
+    stamp = now()
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE releases SET status=?, reviewed_by=?, reviewed_at=? WHERE id=?",
+            (STATUS_HIDDEN, curator_id, stamp, release_id),
+        )
+        conn.execute(
+            "UPDATE tracks SET status=?, reviewed_by=?, reviewed_at=? WHERE release_id=?",
+            (STATUS_HIDDEN, curator_id, stamp, release_id),
+        )
+    for track_item in item["tracks"]:
+        search.remove_track(db, int(track_item["id"]))
+    return release(db, release_id)
 
 
 # --------------------------------------------------------------------------

@@ -421,3 +421,12 @@ endpoint for renaming a release or uploading its cover exists at all.
 Declining a release takes down every track in it, not only the waiting ones —
 otherwise a declined release could leave published tracks behind, a state no
 screen in the product knows how to describe.
+
+**A single track is never decided on its own.** Not accepted, not declined, not
+withdrawn. The unit an artist submits is the unit a curator answers, and
+anything finer is a curator editing somebody's record. `catalog` exposes only
+`approve_release`, `reject_release`, `hide_release` and `restore_release`; an
+invariant test asserts the per-track verbs do not exist. The desk's catalogue
+browses releases for the same reason — a text query still searches tracks,
+because that is what a person types, but the results fold back to the releases
+holding them.
