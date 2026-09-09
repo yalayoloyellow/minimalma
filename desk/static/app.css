@@ -11,7 +11,6 @@
   --muted-soft: #5c5c5c;
   --border-soft: #3d3d3d;
   --border-subtle: #242424;
-  --warn: #c8a24a;
   --bad: #b8635c;
   --good: #6f9a72;
   --radius: 3px;
@@ -174,7 +173,7 @@ button, input, textarea, select {
 .row .t { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .a { color: var(--muted); font-size: 11px; }
 .row .d { color: var(--muted-soft); font-size: 11px; align-self: center; }
-.row .flag { color: var(--warn); font-size: 11px; }
+.row .flag { color: var(--bad); font-size: 11px; }
 
 .empty { color: var(--muted-soft); padding: 24px 10px; }
 
@@ -220,15 +219,7 @@ audio {
   margin-bottom: 7px;
 }
 
-.checks { display: flex; flex-wrap: wrap; gap: 6px; }
-.check {
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  padding: 2px 8px;
-  font-size: 11px;
-  color: var(--warn);
-}
-.check.ok { color: var(--muted-soft); }
+.muted-dash { color: var(--muted-soft); font-size: 11px; }
 
 .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .tag {

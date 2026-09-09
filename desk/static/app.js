@@ -15,7 +15,7 @@ const T = {
     empty_queue: "Очередь пуста.", empty: "Пусто.", pick: "Выберите релиз слева.",
     publish: "Опубликовать релиз", decline: "Отклонить релиз",
     withdraw: "Снять с публикации", save: "Сохранить", undo: "Отменить",
-    tags: "Теги", note: "Заметка куратора", checks: "Проверки",
+    tags: "Теги", note: "Заметка куратора",
     metadata: "Метаданные", tracks: "Треки", cover: "Обложка",
     title: "Название", artist: "Артист", album: "Релиз", year: "Год", kind: "Тип",
     add_tag: "добавить тег и Enter",
@@ -48,7 +48,7 @@ const T = {
     pick: "Choose a release on the left.",
     publish: "Publish release", decline: "Decline release",
     withdraw: "Withdraw", save: "Save", undo: "Undo",
-    tags: "Tags", note: "Curator note", checks: "Checks",
+    tags: "Tags", note: "Curator note",
     metadata: "Metadata", tracks: "Tracks", cover: "Artwork",
     title: "Title", artist: "Artist", album: "Release", year: "Year", kind: "Kind",
     add_tag: "add a tag, then Enter",
@@ -142,28 +142,6 @@ function toast(message, actionLabel, onAction) {
       onAction();
     }
   };
-}
-
-const CHECK_LABELS = {
-  low_bitrate: (v) => `битрейт ${v}k`,
-  lossless_from_lossy: (v) => `lossless из lossy — срез ${Math.round(v / 100) / 10} кГц`,
-  dull_top_end: (v) => `нет верха выше ${Math.round(v / 100) / 10} кГц`,
-  clipping: (v) => `клиппинг ${v}%`,
-  true_peak_over: (v) => `true peak +${v} dBTP`,
-  very_loud: (v) => `${v} LUFS — очень громко`,
-  very_quiet: (v) => `${v} LUFS — очень тихо`,
-  over_compressed: (v) => `crest ${v}`,
-  mono: () => "моно",
-  unprobed: () => "не проанализирован"
-};
-
-function checksHtml(quality) {
-  const keys = Object.keys(quality || {});
-  if (!keys.length) return "";
-  return keys.map((key) => {
-    const label = CHECK_LABELS[key] ? CHECK_LABELS[key](quality[key]) : `${key} ${quality[key]}`;
-    return `<span class="check">${esc(label)}</span>`;
-  }).join("");
 }
 
 const kindLabel = (kind) => (t("kinds")[kind] || kind || "");
@@ -278,8 +256,6 @@ function releaseCard(release, queued) {
         <b>${track.track_no ? track.track_no + " · " : ""}${esc(track.title)}</b>
         <span>${hms(track.duration)}</span>
       </div>
-      <div class="meta">${esc(track.technical || "")}</div>
-      <div class="checks">${checksHtml(track.quality)}</div>
       <audio controls preload="none" src="${media("audio", track.id)}"></audio>
       <div class="tags">${(track.tags || []).map((tag) => `<span class="tag">${esc(tag)}</span>`).join("")}</div>
     </div>`).join("");
@@ -345,15 +321,12 @@ function trackCard(track) {
   return `<div class="card" data-card="${track.id}">
     <h2>${esc(track.title)}</h2>
     <div class="by">${esc(track.artist)} · ${hms(track.duration)}</div>
-    <div class="meta">${esc([track.technical, track.album, track.year].filter(Boolean).join(" · "))}</div>
+    <div class="meta">${esc([track.album, track.year].filter(Boolean).join(" · "))}</div>
     <div class="meta">${track.plays} ${esc(t("plays"))} · ${track.likes} ${esc(t("saves"))} · ${track.exposures} ${esc(t("shown"))}</div>
     <audio controls preload="none" src="${media("audio", track.id)}"></audio>
 
-    <div class="section"><label>${esc(t("checks"))}</label>
-      <div class="checks">${checksHtml(track.quality) || `<span class="check ok">—</span>`}</div>
-    </div>
     <div class="section"><label>${esc(t("tags"))}</label>
-      <div class="tags">${chips || `<span class="check ok">—</span>`}</div>
+      <div class="tags">${chips || `<span class="muted-dash">—</span>`}</div>
       <input type="text" data-newtag placeholder="${esc(t("add_tag"))}">
       <div class="tags" style="margin-top:8px">${suggested}</div>
     </div>

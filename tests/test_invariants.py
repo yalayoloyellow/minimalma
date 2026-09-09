@@ -185,6 +185,55 @@ class TestOnlySolicitedMessages:
         assert columns["digest"] == "0"
 
 
+class TestMeasurementsDoNotJudge:
+    """Numbers feed the ranking. They never grade a submission.
+
+    An earlier version put "quality flags" — low bitrate, dull top end,
+    over-compression, mono — on the review card. Most of those describe an
+    aesthetic rather than a defect: a cassette, a lo-fi mix or a field recording
+    on a cheap microphone trip all of them, so on a station for niche music the
+    warnings fired hardest on exactly the material the station exists for.
+    Whether a record belongs here is decided by ear.
+    """
+
+    def test_the_analyser_returns_measurements_only(self) -> None:
+        from tonearm import audio as audio_mod
+
+        assert not hasattr(audio_mod, "quality_flags")
+        assert not hasattr(audio_mod, "describe_features")
+
+    def test_no_verdict_reaches_a_curator(
+        self, bot: handlers.Bot, api: FakeApi, db: Database
+    ) -> None:
+        bot.handle(
+            fake.audio_message(ARTIST, "j1", "jj1", title="Rough", performer="A", thumbnail=True)
+        )
+        release_id = int(db.scalar("SELECT release_id FROM tracks WHERE file_unique_id='jj1'"))
+        # Pretend the file measured badly by every old rule.
+        db.execute(
+            "UPDATE tracks SET features=? WHERE release_id=?",
+            (
+                '{"bitrate": 64000, "codec": "flac", "cutoff_hz": 9000.0, '
+                '"crest": 1.2, "channels": 1, "lufs": -3.0, "clip_ratio": 0.4}',
+                release_id,
+            ),
+        )
+        api.clear()
+        bot.handle(fake.callback(CURATOR, f"rev|{release_id}"))
+        card = api.last_screen() + " ".join(
+            str(p.get("caption") or "") for p in api.of("sendPhoto")
+        )
+        for word in ("bitrate", "битрейт", "LUFS", "crest", "mono", "моно", "cutoff", "срез"):
+            assert word not in card, f"the review card still grades the file: {word}"
+
+    def test_the_measurements_are_still_used_for_ranking(
+        self, engine: recommend.Engine, seeded: list[int]
+    ) -> None:
+        tokens = engine.tokens(seeded[0])
+        assert any(token.startswith("~tempo:") for token in tokens)
+        assert any(token.startswith("~tone:") for token in tokens)
+
+
 class TestCurationIsMandatory:
     def test_auto_approve_is_off_by_default(self) -> None:
         assert Config(home=Path(".")).auto_approve is False

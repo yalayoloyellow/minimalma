@@ -22,7 +22,6 @@ import html
 from collections.abc import Sequence
 from typing import Any
 
-from . import audio as audio_mod
 from .config import Config
 from .i18n import t
 from .telegram import MAX_CALLBACK_DATA, MAX_CAPTION
@@ -173,31 +172,6 @@ def track_buttons(
         )
     rows.append([button(t(lang, "nav.home"), pack("nav", "home"))])
     return keyboard(*rows)
-
-
-def quality_summary(item: dict[str, Any], lang: str) -> str:
-    """The advisory line on a review card."""
-    quality = item.get("quality") or {}
-    if not quality:
-        return ""
-    labels = {
-        "low_bitrate": "low bitrate {v}k",
-        "lossless_from_lossy": "lossless container, spectrum stops at {v} Hz",
-        "dull_top_end": "no content above {v} Hz",
-        "clipping": "clipped samples {v}%",
-        "true_peak_over": "true peak +{v} dBTP",
-        "very_loud": "{v} LUFS (very loud)",
-        "very_quiet": "{v} LUFS (very quiet)",
-        "over_compressed": "crest factor {v}",
-        "mono": "mono",
-        "unprobed": "could not be analysed",
-    }
-    parts = [
-        labels.get(key, key + " {v}").format(v=value)
-        for key, value in quality.items()
-        if key in labels
-    ]
-    return " · ".join(parts)
 
 
 # --------------------------------------------------------------------------
@@ -587,15 +561,8 @@ def review_caption(lang: str, item: dict[str, Any]) -> str:
         details.append(esc(item["album"]))
     if item.get("year"):
         details.append(str(item["year"]))
-    technical = audio_mod.describe_features(item.get("features") or {})
-    if technical:
-        details.append(esc(technical))
     if details:
         lines.append(" · ".join(details))
-    flags = quality_summary(item, lang)
-    if flags:
-        lines.append("")
-        lines.append(f"<b>{t(lang, 'mod.flags')}</b> · {esc(flags)}")
     if item.get("tags"):
         lines.append("")
         lines.append("<i>" + esc(" · ".join(item["tags"])) + "</i>")
@@ -633,12 +600,10 @@ def review_release(lang: str, item: dict[str, Any]) -> Screen:
         "",
     ]
     for track in item["tracks"]:
-        flags = quality_summary({"quality": _json_like(track.get("quality"))}, lang)
         mark = "·" if track["status"] == "pending" else "×"
         lines.append(
             f"{track.get('track_no') or ''} {mark} {esc(track['title'])}"
             f"  <code>{hms(track.get('duration'))}</code>"
-            + (f"\n    <i>{esc(flags)}</i>" if flags else "")
         )
     blockers = item.get("blockers") or []
     if blockers:
@@ -661,18 +626,6 @@ def review_release(lang: str, item: dict[str, Any]) -> Screen:
     if cover:
         return Screen(text[: MAX_CAPTION - 1], keyboard(*rows), photo=str(cover))
     return Screen(text, keyboard(*rows))
-
-
-def _json_like(value: Any) -> dict:
-    if isinstance(value, dict):
-        return value
-    try:
-        import json
-
-        parsed = json.loads(value or "{}")
-    except (TypeError, ValueError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
 
 
 def release_queue_screen(lang: str, items: Sequence[dict[str, Any]], total: int) -> Screen:

@@ -127,34 +127,10 @@ class TestFeatureTokens:
         assert audio.feature_tokens({}) == []
 
 
-class TestQualityFlags:
-    def test_a_lossless_container_with_a_low_cutoff_is_flagged(self) -> None:
-        flags = audio.quality_flags({"codec": "flac", "cutoff_hz": 15000.0}, {"format": "flac"})
-        assert "lossless_from_lossy" in flags
-
-    def test_loudness_extremes_are_flagged(self) -> None:
-        assert "very_loud" in audio.quality_flags({"lufs": -5.0}, {"x": 1})
-        assert "very_quiet" in audio.quality_flags({"lufs": -30.0}, {"x": 1})
-
-    def test_a_clean_file_produces_no_alarm(self) -> None:
-        flags = audio.quality_flags(
-            {
-                "codec": "flac",
-                "bitrate": 900_000,
-                "cutoff_hz": 20000.0,
-                "lufs": -14.0,
-                "crest": 8.0,
-                "channels": 2,
-            },
-            {"format": "flac"},
-        )
-        assert flags == {}
-
-
 class TestGracefulDegradation:
     def test_analysis_without_ffmpeg_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(audio, "have_ffmpeg", lambda: False)
-        assert audio.analyse(b"whatever", "x.mp3") == ({}, {})
+        assert audio.analyse(b"whatever", "x.mp3") == {}
 
     def test_probing_a_missing_binary_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(audio, "_which", lambda name: None)
@@ -163,12 +139,7 @@ class TestGracefulDegradation:
         assert audio.extract_cover(Path("/nonexistent")) is None
 
     def test_hostile_bytes_do_not_raise(self) -> None:
-        features, quality = audio.analyse(b"\x00\xff" * 5000, "evil.mp3")
-        assert isinstance(features, dict) and isinstance(quality, dict)
-
-    def test_describe_features_handles_partial_data(self) -> None:
-        assert audio.describe_features({}) == ""
-        assert "FLAC" in audio.describe_features({"codec": "flac"})
+        assert isinstance(audio.analyse(b"\x00\xff" * 5000, "evil.mp3"), dict)
 
 
 @needs_ffmpeg
@@ -214,11 +185,12 @@ class TestWithFfmpeg:
         assert info["tags"]["title"] == "Real Title"
 
     def test_analysis_produces_a_usable_feature_set(self, real_mp3: bytes) -> None:
-        features, quality = audio.analyse(real_mp3, "real.mp3")
+        """The measurements exist to feed the recommender, not to judge."""
+        features = audio.analyse(real_mp3, "real.mp3")
         assert features["codec"] == "mp3"
         assert "lufs" in features
         assert features["centroid"] < 600  # a 220 Hz sine is dark
-        assert isinstance(quality, dict)
+        assert audio.feature_tokens(features)
 
     def test_our_own_parser_agrees_with_ffprobe(self, real_mp3: bytes, tmp_path: Path) -> None:
         from tonearm import metadata
@@ -383,8 +355,7 @@ class TestWithFfmpeg:
         assert audio.normalise_cover(tags.cover)[:2] == b"\xff\xd8"
 
     def test_a_truncated_file_is_survived(self, real_mp3: bytes) -> None:
-        features, quality = audio.analyse(real_mp3[: len(real_mp3) // 3], "trunc.mp3")
-        assert isinstance(features, dict)
+        assert isinstance(audio.analyse(real_mp3[: len(real_mp3) // 3], "trunc.mp3"), dict)
 
     def test_subprocess_arguments_are_never_shell_interpreted(self, tmp_path: Path) -> None:
         # A filename full of shell metacharacters must be harmless.

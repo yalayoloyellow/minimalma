@@ -63,10 +63,11 @@ background playback, and a chat that doubles as a listening history.
 
 - A review queue of *releases* — a single, an EP or an album as one card, never
   a scatter of loose tracks — with the audio, the metadata and automatic
-  quality checks:
-  loudness, clipping, true-peak overs, dynamic range, and the spectral cutoff
-  that reveals a 128 kbps re-encode uploaded as lossless.
-- Approve, decline with a reason, retag, add a note, or fix the metadata.
+  metadata — with every track playable in place.
+- Approve, decline with a reason, retag, add a note, fix the metadata, attach
+  artwork.
+- No quality grading and no technical verdict: the decision is made by ear. If
+  it sounds right to the curator, it belongs here.
 - Nothing is ever published automatically.
 
 ## What it deliberately does not do
@@ -85,6 +86,7 @@ not a configuration accident.
 | Push notifications | One optional weekly note, off by default. The only other unsolicited message is the answer to your own submission. |
 | Ranking by skip rate or session length | Ranking by whether people keep a track. |
 | Emoji-heavy UI | Monochrome text. |
+| Grading a file by its numbers | The curator's ear decides. Measurements feed ranking, never a verdict. |
 
 The exploration term in the ranker exists for the same reason: an unheard track
 gets a bonus proportional to how few people have been shown it, and every daily
@@ -118,7 +120,7 @@ python3 -m tonearm run
 ```
 
 Requires **Python 3.9 or newer** and nothing else. `ffmpeg` is optional: with
-it you get loudness measurement, tempo estimation and the quality checks;
+it you get loudness, tempo and spectral measurements that feed the recommender;
 without it every other feature behaves identically.
 
 ## Set up
@@ -256,7 +258,7 @@ tonearm/
   telegram.py   Bot API client: long polling, multipart, 429 backoff, error vocabulary
   db.py         SQLite schema, migrations, per-thread connections, WAL
   metadata.py   ID3/FLAC/Ogg/MP4/WAV parsing, normalisation, transliteration
-  audio.py      ffprobe/ffmpeg + a pure-Python FFT, tempo and quality checks
+  audio.py      ffprobe/ffmpeg + a pure-Python FFT: tempo, spectrum, loudness
   catalog.py    Intake, deduplication, moderation, the catalogue itself
   search.py     FTS5 with a transliterated column and a fuzzy fallback
   recommend.py  Vectors, item-item CF, exposure fairness, MMR, daily sets, mixes

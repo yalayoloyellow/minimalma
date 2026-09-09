@@ -125,12 +125,14 @@ class TestReading:
         assert payload["total"] == 1
         assert payload["items"][0]["title"] == "Waiting"
 
-    def test_track_detail_carries_the_analysis(self, running, seeded) -> None:
+    def test_track_detail(self, running, seeded) -> None:
         _desk, base, key = running
         payload = api_get(base, f"/api/track/{seeded[0]}", key)
         assert payload["title"] == "Nightpost"
         assert payload["tags"] == ["ambient", "field recording"]
-        assert "quality" in payload and "technical" in payload
+        # Measurements are kept for ranking; the desk is not shown a verdict.
+        assert "quality" not in payload
+        assert "technical" not in payload
 
     def test_missing_track_is_404(self, running) -> None:
         _desk, base, key = running

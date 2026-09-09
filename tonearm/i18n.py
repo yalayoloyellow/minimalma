@@ -263,7 +263,6 @@ STRINGS: dict[str, dict[str, str]] = {
     "mod.saved": {"en": "Saved.", "ru": "Сохранено."},
     "mod.not_curator": {"en": "That is for curators.", "ru": "Это для кураторов."},
     "mod.new_submission": {"en": "New submission", "ru": "Новая заявка"},
-    "mod.flags": {"en": "Checks", "ru": "Проверки"},
     # ----------------------------------------------------------- settings
     "settings.title": {"en": "SETTINGS", "ru": "НАСТРОЙКИ"},
     "settings.language": {"en": "Language", "ru": "Язык"},

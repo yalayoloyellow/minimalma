@@ -182,8 +182,30 @@ middle of the track at 22050 Hz mono, then:
 Loudness comes from `ffmpeg -af loudnorm=print_format=json`, which reports
 `input_i`, `input_tp`, `input_lra` and `input_thresh` as JSON on stderr.
 
-The spectral cutoff is the interesting one: a FLAC whose spectrum stops at
-15 kHz is a re-encoded MP3 in a lossless container, and the curator gets told.
+**These numbers never reach a curator.** They exist to feed the recommender —
+tempo, brightness, level and texture become the bucketed tokens in
+`feature_tokens()` — and for nothing else.
+
+An earlier version derived "quality flags" from the same measurements and put
+them on the review card: low bitrate, dull top end, over-compression, mono, a
+lossless container whose spectrum stops early. It was removed, and the reasoning
+is worth keeping.
+
+Ask of any indicator: does it tell the curator something their ears cannot, and
+does it change what they do? Almost none of them passed. A cutoff at 13 kHz
+might be a bad encode — or a cassette, a lo-fi mix, or a field recording on a
+cheap microphone. On a station whose whole point is niche and experimental
+music, that flag fires hardest on exactly the material the station exists for.
+Crest factor and mono are aesthetic choices, not defects. True-peak overs matter
+when audio is transcoded, and nothing here transcodes: Telegram re-sends the
+original file.
+
+Only the lossless-from-lossy case survived that test on its own merits, and it
+went too — because if the decision is made by ear, a file that sounds right *is*
+right, and the contradiction between container and content is bookkeeping rather
+than judgement. What remains is worth stating plainly: **a panel that reads like
+a verdict quietly pushes a curator away from the music the station was built
+for.** There is an invariant test pinning this.
 
 Subprocesses are always argument lists, never a shell, always with a timeout,
 and temporary files are removed in a `finally`.

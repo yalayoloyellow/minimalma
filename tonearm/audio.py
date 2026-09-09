@@ -20,7 +20,6 @@ import json
 import logging
 import math
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -525,14 +524,24 @@ def _estimate_tempo(envelope: list[float], frame_rate: float) -> float | None:
 # --------------------------------------------------------------------------
 
 
-def analyse(data: bytes, filename: str = "audio") -> tuple[dict[str, Any], dict[str, Any]]:
-    """Return ``(features, quality)`` for an audio file held in memory.
+def analyse(data: bytes, filename: str = "audio") -> dict[str, Any]:
+    """Measure an audio file held in memory.
 
-    ``features`` feeds the recommender. ``quality`` is a set of advisory flags
-    shown to the curator; nothing is ever auto-rejected on their basis.
+    The result feeds the recommender and nothing else. It is never shown to a
+    curator and never scores a submission: whether a record belongs on the
+    station is a judgement made by ear, and a number cannot help with it.
+
+    An earlier version derived "quality flags" from these same measurements —
+    low bitrate, dull top end, over-compression, mono — and put them on the
+    review card. That was a mistake worth recording. Most of those readings
+    describe an aesthetic rather than a defect: a cassette, a lo-fi mix or a
+    field recording on a cheap microphone all trip them, which on a station for
+    niche music means the warnings fire hardest on exactly the material the
+    station exists for. A panel that reads like a verdict quietly pushes a
+    curator away from it.
     """
     if not data or not have_ffmpeg():
-        return {}, {}
+        return {}
     suffix = Path(filename).suffix[:8] or ".bin"
     temp: Path | None = None
     try:
@@ -551,50 +560,13 @@ def analyse(data: bytes, filename: str = "audio") -> tuple[dict[str, Any], dict[
         if samples:
             features.update(spectral_features(samples))
             features.update(envelope_features(samples))
-        return features, quality_flags(features, info)
+        return features
     except Exception as exc:  # pragma: no cover - never let analysis break intake
         log.warning("analysis failed for %s: %s", filename, exc)
-        return {}, {}
+        return {}
     finally:
         if temp is not None:
             _unlink(temp)
-
-
-def quality_flags(features: dict[str, Any], info: dict[str, Any]) -> dict[str, Any]:
-    """Advisory findings for the review card."""
-    flags: dict[str, Any] = {}
-    bitrate = features.get("bitrate") or 0
-    codec = (features.get("codec") or "").lower()
-    cutoff = features.get("cutoff_hz") or 0
-    lufs = features.get("lufs")
-    peak = features.get("true_peak")
-    clip = features.get("clip_ratio") or 0
-    crest = features.get("crest") or 0
-    channels = features.get("channels") or 0
-
-    if bitrate and bitrate < 128_000 and codec not in ("opus", "vorbis", "aac"):
-        flags["low_bitrate"] = int(bitrate // 1000)
-    if cutoff and cutoff < 15_500 and codec in ("flac", "alac", "pcm_s16le", "wav"):
-        # A lossless container whose spectrum stops early is a re-encode.
-        flags["lossless_from_lossy"] = int(cutoff)
-    elif cutoff and cutoff < 14_000:
-        flags["dull_top_end"] = int(cutoff)
-    if clip > 0.0005:
-        flags["clipping"] = round(clip * 100, 3)
-    if peak is not None and peak > 0.0:
-        flags["true_peak_over"] = peak
-    if lufs is not None:
-        if lufs > -7.0:
-            flags["very_loud"] = lufs
-        elif lufs < -24.0:
-            flags["very_quiet"] = lufs
-    if crest and crest < 2.5:
-        flags["over_compressed"] = crest
-    if channels == 1:
-        flags["mono"] = True
-    if not info:
-        flags["unprobed"] = True
-    return flags
 
 
 def _float(value: Any) -> float | None:
@@ -616,32 +588,6 @@ def _unlink(path: Path) -> None:
         os.unlink(path)
     except OSError:  # pragma: no cover
         pass
-
-
-def describe_features(features: dict[str, Any]) -> str:
-    """One compact human line for the review card."""
-    bits: list[str] = []
-    if features.get("codec"):
-        codec = str(features["codec"]).upper()
-        rate = features.get("bitrate")
-        bits.append(f"{codec} {int(rate // 1000)}k" if rate else codec)
-    if features.get("sample_rate"):
-        bits.append(f"{float(features['sample_rate']) / 1000:g}kHz")
-    if features.get("lufs") is not None:
-        bits.append(f"{features['lufs']} LUFS")
-    if features.get("tempo"):
-        bits.append(f"~{int(round(features['tempo']))} BPM")
-    cutoff = features.get("cutoff_hz") or 0
-    if cutoff:
-        # Below 1 kHz an integer division reads as "cut 0kHz", which is worse
-        # than useless on a curator's card.
-        bits.append(
-            f"cut {cutoff / 1000:.1f}kHz" if cutoff < 10_000 else f"cut {cutoff / 1000:.0f}kHz"
-        )
-    return " · ".join(bits)
-
-
-_BAND_LABELS = re.compile(r"[^a-z0-9]+")
 
 
 def feature_tokens(features: dict[str, Any]) -> list[str]:

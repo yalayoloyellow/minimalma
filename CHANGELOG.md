@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Quality flags.** The review card no longer grades a submission — no bitrate
+  warning, no "dull top end", no crest factor, no mono notice, no lossless
+  container check. Most of those readings describe an aesthetic rather than a
+  defect, so on a station for niche music they fired hardest on exactly the
+  material it exists for, and a panel that reads like a verdict pushes a curator
+  away from it. Whether a record belongs here is decided by ear.
+- The measurements themselves stay and still feed the recommender through
+  `feature_tokens()`; `audio.analyse()` now returns features alone rather than a
+  `(features, quality)` pair, and `quality_flags()` and `describe_features()`
+  are gone. An invariant test keeps the verdict from coming back.
+
 ## [0.2.0-alpha] - 2026-09-09
 
 Releases become the unit of the catalogue, and a local curation console arrives

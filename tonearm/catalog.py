@@ -58,7 +58,6 @@ class Intake:
     duration: int = 0
     cover_file_id: str | None = None
     features: dict[str, Any] = field(default_factory=dict)
-    quality: dict[str, Any] = field(default_factory=dict)
     duplicate_of: int | None = None
     error: str = ""
     warnings: list[str] = field(default_factory=list)
@@ -561,10 +560,10 @@ def intake(
             log.warning("could not fetch %s: %s", filename or unique_id, exc)
 
     name = filename or payload.get("file_name") or ""
-    features, quality = ({}, {})
+    features: dict[str, Any] = {}
     probed: dict[str, Any] = {}
     if blob:
-        features, quality = audio_mod.analyse(blob, name or "audio.mp3")
+        features = audio_mod.analyse(blob, name or "audio.mp3")
         probed = {"tags": features.pop("tags", {})} if "tags" in features else {}
     tags = resolve_tags(payload, name, blob, probed)
 
@@ -607,8 +606,8 @@ def intake(
         "INSERT INTO tracks("
         " artist_id, release_id, track_no, title, key, album, year, duration,"
         " file_id, file_unique_id, file_size, mime, cover_file_id, status,"
-        " submitted_by, submitted_at, features, quality"
-        ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " submitted_by, submitted_at, features"
+        ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             artist_id,
             release_id,
@@ -627,7 +626,6 @@ def intake(
             user_id,
             now(),
             json.dumps(features, ensure_ascii=False) if features else None,
-            json.dumps(quality, ensure_ascii=False) if quality else None,
         ),
     )
     result.track_id = int(cursor.lastrowid)
@@ -640,7 +638,6 @@ def intake(
     result.duration = duration
     result.cover_file_id = cover_file_id
     result.features = features
-    result.quality = quality
 
     # The first artwork to arrive becomes the release cover; a curator can
     # replace it later.
@@ -726,7 +723,6 @@ def track(db: Database, track_id: int) -> dict[str, Any] | None:
     item = dict(row)
     item["tags"] = tags_of(db, track_id)
     item["features"] = _json(item.get("features"))
-    item["quality"] = _json(item.get("quality"))
     # Artwork resolves through the release, so a track never shows up bare
     # just because its own file carried no picture.
     if item.get("release_id"):
