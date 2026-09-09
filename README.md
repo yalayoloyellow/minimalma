@@ -271,7 +271,7 @@ is, including the alternatives that were tried and rejected.
 ```bash
 git clone https://github.com/yalayoloyellow/tonearm && cd tonearm
 uv venv && uv pip install pytest ruff
-.venv/bin/python -m pytest      # 217 tests, ~4 seconds, no network
+.venv/bin/python -m pytest      # 218 tests, ~4 seconds, no network
 .venv/bin/ruff check .
 ```
 
