@@ -16,12 +16,12 @@ from pathlib import Path
 from typing import Any
 
 CONFIG_NAME = "config.json"
-DATABASE_NAME = "tonearm.db"
+DATABASE_NAME = "minimalma.db"
 
 #: Environment variable that relocates the whole data directory.
-HOME_ENV = "TONEARM_HOME"
+HOME_ENV = "MINIMALMA_HOME"
 #: Environment variable that overrides the stored bot token.
-TOKEN_ENV = "TONEARM_TOKEN"
+TOKEN_ENV = "MINIMALMA_TOKEN"
 
 
 def default_home() -> Path:
@@ -30,12 +30,12 @@ def default_home() -> Path:
     if override:
         return Path(override).expanduser()
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "tonearm"
+        return Path.home() / "Library" / "Application Support" / "minimalma"
     if os.name == "nt":
         base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
-        return Path(base) / "tonearm"
+        return Path(base) / "minimalma"
     base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    return Path(base) / "tonearm"
+    return Path(base) / "minimalma"
 
 
 @dataclass
@@ -71,7 +71,7 @@ class Limits:
 
 @dataclass
 class Weights:
-    """Ranking weights. Documented in ``tonearm/recommend.py``."""
+    """Ranking weights. Documented in ``minimalma/recommend.py``."""
 
     collaborative: float = 1.0
     content: float = 1.0
@@ -131,7 +131,7 @@ class Config:
 
     @property
     def log_path(self) -> Path:
-        return self.home / "tonearm.log"
+        return self.home / "minimalma.log"
 
     # ------------------------------------------------------------------- auth
     def is_curator(self, user_id: int) -> bool:

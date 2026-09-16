@@ -11,7 +11,7 @@ fail() {
 
 APP="${0:A:h:h:h:h}"
 LOG="$HOME/Library/Logs/minimalma.log"
-[[ -f $APP/tonearm/__main__.py ]] || fail "рядом с приложением нет файлов minimalma: $APP"
+[[ -f $APP/minimalma/__main__.py ]] || fail "рядом с приложением нет файлов minimalma: $APP"
 
 PY=""
 for cand in python3.13 python3.12 python3.11 python3.10 python3.9 python3 \
@@ -26,5 +26,5 @@ done
 
 mkdir -p "${LOG:h}"
 cd "$APP"
-"$PY" -m tonearm >>"$LOG" 2>&1 &!
+"$PY" -m minimalma >>"$LOG" 2>&1 &!
 exit 0

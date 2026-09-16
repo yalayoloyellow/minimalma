@@ -1,6 +1,6 @@
 """Command line entry point.
 
-``tonearm setup`` then ``tonearm run`` is the whole operator experience. Every
+``minimalma setup`` then ``minimalma run`` is the whole operator experience. Every
 other subcommand is maintenance you should rarely need.
 """
 

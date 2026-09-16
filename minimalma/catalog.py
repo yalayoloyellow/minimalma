@@ -5,8 +5,8 @@ arrives as a Telegram ``Audio`` object plus, when it is small enough to fetch,
 the file's own bytes. Four sources of metadata are reconciled here, in
 descending order of trust:
 
-1. tags embedded in the file (:mod:`tonearm.metadata`),
-2. what ``ffprobe`` says about the stream (:mod:`tonearm.audio`),
+1. tags embedded in the file (:mod:`minimalma.metadata`),
+2. what ``ffprobe`` says about the stream (:mod:`minimalma.audio`),
 3. the ``performer``/``title`` Telegram itself parsed,
 4. the filename.
 
@@ -29,7 +29,7 @@ from .config import Config
 from .db import Database, now
 from .telegram import Api
 
-log = logging.getLogger("tonearm.catalog")
+log = logging.getLogger("minimalma.catalog")
 
 STATUS_PENDING = "pending"
 STATUS_APPROVED = "approved"

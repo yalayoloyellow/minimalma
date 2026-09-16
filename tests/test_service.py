@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from tonearm import VERSION_LABEL, app, catalog, cli, i18n, recommend, ui
-from tonearm import config as config_mod
-from tonearm.config import Config
-from tonearm.db import SCHEMA_VERSION, Database
+from minimalma import VERSION_LABEL, app, catalog, cli, i18n, recommend, ui
+from minimalma import config as config_mod
+from minimalma.config import Config
+from minimalma.db import SCHEMA_VERSION, Database
 
 from . import fake
 from .conftest import ARTIST, LISTENER
@@ -76,7 +76,7 @@ class TestConfig:
         assert cfg.is_owner(1) and not cfg.is_owner(2)
 
     def test_home_is_platform_specific(self) -> None:
-        assert "tonearm" in str(config_mod.default_home()).lower()
+        assert "minimalma" in str(config_mod.default_home()).lower()
 
 
 class TestDatabase:
@@ -311,7 +311,7 @@ class TestServiceLoop:
     def test_repeated_poll_conflicts_stop_the_worker(
         self, config: Config, db: Database, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from tonearm.telegram import TelegramError
+        from minimalma.telegram import TelegramError
 
         class ConflictApi(FakeApi):
             def get_updates(self, *args, **kwargs):

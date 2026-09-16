@@ -18,7 +18,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger("tonearm.db")
+log = logging.getLogger("minimalma.db")
 
 SCHEMA_VERSION = 4
 
@@ -379,9 +379,9 @@ class Database:
         current = int(conn.execute("PRAGMA user_version").fetchone()[0])
         if current > SCHEMA_VERSION:
             raise RuntimeError(
-                f"database at {self.path} was written by a newer Tonearm "
+                f"database at {self.path} was written by a newer minimalma "
                 f"(schema {current} > {SCHEMA_VERSION}); upgrade or point "
-                f"TONEARM_HOME elsewhere"
+                f"MINIMALMA_HOME elsewhere"
             )
         with self._write_lock:
             for index in range(current, SCHEMA_VERSION):

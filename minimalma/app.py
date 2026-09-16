@@ -19,7 +19,7 @@ from .db import Database
 from .i18n import normalise, t
 from .telegram import Api, NetworkError, TelegramError
 
-log = logging.getLogger("tonearm")
+log = logging.getLogger("minimalma")
 
 #: Handlers run on a small pool. Updates are sharded by chat id so that two
 #: messages from the same person can never be processed out of order.
@@ -33,7 +33,7 @@ def configure_logging(config: Config) -> None:
     level = {"quiet": logging.WARNING, "normal": logging.INFO, "debug": logging.DEBUG}.get(
         config.log_level, logging.INFO
     )
-    root = logging.getLogger("tonearm")
+    root = logging.getLogger("minimalma")
     root.setLevel(level)
     root.handlers.clear()
 

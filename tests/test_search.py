@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from tonearm import catalog, search
-from tonearm.db import Database
+from minimalma import catalog, search
+from minimalma.db import Database
 
 
 def _titles(db: Database, results) -> list[str]:

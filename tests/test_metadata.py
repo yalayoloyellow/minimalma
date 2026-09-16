@@ -7,7 +7,7 @@ import struct
 
 import pytest
 
-from tonearm import metadata
+from minimalma import metadata
 
 from .fake import JPEG, id3_file, id3v1_file
 

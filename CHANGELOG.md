@@ -60,7 +60,7 @@ alongside the bot.
 - **Release-level moderation.** The queue lists releases rather than loose
   tracks, one review card per release rather than one per track, and publishing
   or declining acts on every waiting track inside it.
-- **The curation desk** (`tonearm desk`) — a local console: the queue with
+- **The curation desk** (`minimalma desk`) — a local console: the queue with
   in-place playback, quality checks, metadata and note editing, drag-and-drop
   artwork, the catalogue, artists, playlists, station statistics and a bot
   start/stop switch. A stdlib HTTP server and a build-free page; `pywebview`
@@ -74,7 +74,7 @@ alongside the bot.
 - Schema version 2. Existing databases are migrated in one transaction: every
   track is grouped into a release, artwork and track numbers are backfilled, and
   a failure leaves a v1 database untouched.
-- `tonearm` with no arguments now opens the desk instead of printing help.
+- `minimalma` with no arguments now opens the desk instead of printing help.
 - The bot's home screen gained a Releases entry and shows a release count.
 
 ### Fixed

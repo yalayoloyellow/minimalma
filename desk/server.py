@@ -1,7 +1,7 @@
 """The curation desk: a local HTTP server over the same catalogue the bot uses.
 
 Deliberately thin. Every operation here calls the same functions in
-``tonearm.catalog`` that the bot calls, so there is one implementation of
+``minimalma.catalog`` that the bot calls, so there is one implementation of
 "approve a track" and not two. The desk owns no state; it reads and writes the
 same SQLite file, which is safe from a second process because the database runs
 in WAL mode.
@@ -25,12 +25,12 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from tonearm import catalog, recommend, search
-from tonearm.config import Config
-from tonearm.db import Database
-from tonearm.telegram import Api, NetworkError, TelegramError
+from minimalma import catalog, recommend, search
+from minimalma.config import Config
+from minimalma.db import Database
+from minimalma.telegram import Api, NetworkError, TelegramError
 
-log = logging.getLogger("tonearm.desk")
+log = logging.getLogger("minimalma.desk")
 
 STATIC = Path(__file__).resolve().parent / "static"
 
@@ -86,7 +86,7 @@ class Desk:
                 return {"running": True, "error": ""}
             if not self.config.token:
                 return {"running": False, "error": "нет токена — подключите бота в настройках"}
-            from tonearm.app import Service
+            from minimalma.app import Service
 
             self._bot_error = ""
             try:
@@ -559,8 +559,8 @@ def _notify(desk: Desk, item: dict, approved: bool) -> None:
     """Tell the artist, exactly as the bot would. Never blocks the response."""
     if desk.api is None or not item.get("submitted_by"):
         return
-    from tonearm import ui
-    from tonearm.i18n import normalise, t
+    from minimalma import ui
+    from minimalma.i18n import normalise, t
 
     row = catalog.get_user(desk.db, int(item["submitted_by"]))
     lang = normalise((row or {}).get("lang") or desk.config.lang)
@@ -620,7 +620,7 @@ def _int(value: Any, default: int) -> int:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "tonearm-desk"
+    server_version = "minimalma-desk"
     desk: Desk = None  # type: ignore[assignment]
 
     def log_message(self, fmt: str, *args: Any) -> None:  # quieter than the default
@@ -628,7 +628,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # ----------------------------------------------------------------- auth
     def _authorised(self, query: dict) -> bool:
-        supplied = self.headers.get("X-Tonearm-Key") or query.get("k") or ""
+        supplied = self.headers.get("X-minimalma-Key") or query.get("k") or ""
         return secrets.compare_digest(str(supplied), self.desk.key)
 
     # ------------------------------------------------------------- requests

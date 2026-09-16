@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from tonearm import telegram
+from minimalma import telegram
 
 
 class TestMultipart:

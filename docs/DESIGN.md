@@ -350,7 +350,7 @@ mid-flight and asserts the v1 database is untouched.
 
 ## 14. The curation desk
 
-`desk/` is optional, and the package below `tonearm/` does not import it — a
+`desk/` is optional, and the package below `minimalma/` does not import it — a
 test enforces that at column zero, allowing only the lazy, `ImportError`-guarded
 import in `cli.py`. Delete the directory and the bot is unchanged.
 

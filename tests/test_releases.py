@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-import tonearm.db as dbmod
-from tonearm import catalog, handlers
-from tonearm.config import Config
-from tonearm.db import Database
+import minimalma.db as dbmod
+from minimalma import catalog, handlers
+from minimalma.config import Config
+from minimalma.db import Database
 
 from . import fake
 from .conftest import ARTIST, CURATOR, LISTENER

@@ -1,6 +1,6 @@
-"""Tonearm — a curated music streaming service that runs inside a Telegram bot.
+"""minimalma — a curated music streaming service that runs inside a Telegram bot.
 
-The package is dependency-free: everything below the ``tonearm`` namespace uses
+The package is dependency-free: everything below the ``minimalma`` namespace uses
 nothing but the Python standard library. ``ffmpeg``/``ffprobe`` are used when
 present and every code path degrades cleanly when they are not.
 """

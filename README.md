@@ -1,4 +1,4 @@
-# Tonearm
+# minimalma
 
 Кураторский стриминг, который целиком живёт внутри телеграм-бота.
 
@@ -9,7 +9,7 @@
 Запускается одним токеном и больше ничем:
 
 ```bash
-uv tool install git+https://github.com/yalayoloyellow/tonearm && tonearm setup && tonearm desk
+uv tool install git+https://github.com/yalayoloyellow/tonearm && minimalma setup && minimalma desk
 ```
 
 [![CI](https://github.com/yalayoloyellow/tonearm/actions/workflows/ci.yml/badge.svg)](https://github.com/yalayoloyellow/tonearm/actions/workflows/ci.yml)
@@ -105,8 +105,8 @@ uv tool install git+https://github.com/yalayoloyellow/tonearm && tonearm setup &
 тегает под продвижение, куратор — под полку; если словарь отдать артисту,
 рекомендации начнут верить его маркетингу.
 
-**Как назначается.** `tonearm setup` спрашивает Telegram user id и пишет его в
-`config.json` как `owner`. Дальше — `tonearm curator add <id>`. Свой id узнаётся
+**Как назначается.** `minimalma setup` спрашивает Telegram user id и пишет его в
+`config.json` как `owner`. Дальше — `minimalma curator add <id>`. Свой id узнаётся
 командой `/whoami` боту. Правило одно: `is_curator(id)` = `id == owner` или
 `id ∈ curators`, и оно проверяется **на сервере в каждом callback модерации**, а
 не прятанием кнопок: слушатель, вручную подставивший `rel|ok|<id>`, получит
@@ -115,7 +115,7 @@ uv tool install git+https://github.com/yalayoloyellow/tonearm && tonearm setup &
 **Несколько кураторов** — приватная группа, её chat id в `review_chat`. Карточки
 приходят туда, любой из группы жмёт кнопку. Без `review_chat` — каждому в личку.
 
-**Пульт.** `tonearm desk` — то же самое в окне: очередь слева, релиз справа,
+**Пульт.** `minimalma desk` — то же самое в окне: очередь слева, релиз справа,
 все треки с плеерами, теги и заметка, `J`/`K` листать, пробел играть,
 `⌘↵` опубликовать, `⌘⌫` отклонить. После решения всплывает «Отменить» —
 любое решение обратимо.
@@ -180,7 +180,7 @@ uv tool install git+https://github.com/yalayoloyellow/tonearm && tonearm setup &
 На macOS — двойной клик. Для других систем ниже есть три равноценных варианта.
 
 На macOS: скачай папку и **дважды кликни `установить.command`**. Он найдёт
-Python, проведёт первую настройку, создаст `tonearm.app` на Рабочем столе и
+Python, проведёт первую настройку, создаст `minimalma.app` на Рабочем столе и
 запустит пульт. Ставить пакет не нужно.
 
 ```bash
@@ -195,9 +195,9 @@ pipx install git+https://github.com/yalayoloyellow/tonearm
 
 ```bash
 # или просто склонировать — ставить нечего
-git clone https://github.com/yalayoloyellow/tonearm && cd tonearm
-python3 -m tonearm setup
-python3 -m tonearm desk
+git clone https://github.com/yalayoloyellow/tonearm && cd minimalma
+python3 -m minimalma setup
+python3 -m minimalma desk
 ```
 
 Нужен **Python 3.9 или новее** и больше ничего. `ffmpeg` опционален: с ним работают измерение
@@ -209,31 +209,31 @@ python3 -m tonearm desk
 ## Настройка
 
 1. Создайте бота у [@BotFather](https://t.me/BotFather), скопируйте токен.
-2. `tonearm setup` — проверит токен, спросит первого куратора, запишет конфиг.
-3. `tonearm desk` — откроет пульт и запустит бота.
+2. `minimalma setup` — проверит токен, спросит первого куратора, запишет конфиг.
+3. `minimalma desk` — откроет пульт и запустит бота.
 
 ```
-tonearm                           то же, что tonearm desk
-tonearm desk                      пульт куратора + бот
-tonearm run                       только бот, без окна (для сервера)
-tonearm setup                     первая настройка
-tonearm curator add|remove|list   кто может публиковать
-tonearm doctor                    проверка установки
-tonearm doctor --reindex          пересобрать поисковый индекс
-tonearm backup [путь]             согласованная копия базы
-tonearm export [путь]             каталог в JSON
-tonearm digest                    разослать еженедельную сводку сейчас
+minimalma                           то же, что minimalma desk
+minimalma desk                      пульт куратора + бот
+minimalma run                       только бот, без окна (для сервера)
+minimalma setup                     первая настройка
+minimalma curator add|remove|list   кто может публиковать
+minimalma doctor                    проверка установки
+minimalma doctor --reindex          пересобрать поисковый индекс
+minimalma backup [путь]             согласованная копия базы
+minimalma export [путь]             каталог в JSON
+minimalma digest                    разослать еженедельную сводку сейчас
 ```
 
-Всё живёт в одной папке: `~/Library/Application Support/tonearm` на macOS,
-`$XDG_DATA_HOME/tonearm` на Linux, `%APPDATA%\tonearm` на Windows. Меняется
-переменной `TONEARM_HOME`. Бэкап станции — это копия одного файла SQLite.
+Всё живёт в одной папке: `~/Library/Application Support/minimalma` на macOS,
+`$XDG_DATA_HOME/minimalma` на Linux, `%APPDATA%\minimalma` на Windows. Меняется
+переменной `MINIMALMA_HOME`. Бэкап станции — это копия одного файла SQLite.
 
 ---
 
 ## Пульт куратора
 
-`tonearm desk` открывает локальное окно: тёмный моношрифтовый интерфейс, тот же
+`minimalma desk` открывает локальное окно: тёмный моношрифтовый интерфейс, тот же
 визуальный язык, что и в остальных инструментах.
 
 - **Очередь** — релизы слева, карточка справа: обложка, трек-лист, все треки со
@@ -290,11 +290,11 @@ tonearm digest                    разослать еженедельную с
 Для одноразового запуска без записи токена в конфигурацию используйте:
 
 ```bash
-tonearm run --token '123456:ABC...'
-tonearm desk --token '123456:ABC...' --browser
+minimalma run --token '123456:ABC...'
+minimalma desk --token '123456:ABC...' --browser
 ```
 
-Также поддерживается переменная окружения `TONEARM_TOKEN`.
+Также поддерживается переменная окружения `MINIMALMA_TOKEN`.
 
 ---
 
@@ -361,7 +361,7 @@ explore(t) = sqrt( ln(E + 2) / (показов(t) + 1) )
 ## Устройство
 
 ```
-tonearm/
+minimalma/
   telegram.py   Клиент Bot API: long polling, multipart, backoff на 429, словарь ошибок
   db.py         Схема SQLite, миграции, соединение на поток, WAL
   metadata.py   Разбор ID3/FLAC/Ogg/MP4/WAV, нормализация, транслитерация
@@ -389,7 +389,7 @@ desk/           Пульт куратора: stdlib-сервер + страни�
 ## Разработка
 
 ```bash
-git clone https://github.com/yalayoloyellow/tonearm && cd tonearm
+git clone https://github.com/yalayoloyellow/tonearm && cd minimalma
 uv venv && uv pip install pytest ruff
 .venv/bin/python -m pytest      # 285 тестов, ~30 секунд, без сети
 .venv/bin/ruff check .

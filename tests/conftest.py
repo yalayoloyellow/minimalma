@@ -8,9 +8,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tonearm import catalog, handlers, metadata, recommend, search  # noqa: E402
-from tonearm.config import Config  # noqa: E402
-from tonearm.db import Database, now  # noqa: E402
+from minimalma import catalog, handlers, metadata, recommend, search  # noqa: E402
+from minimalma.config import Config  # noqa: E402
+from minimalma.db import Database, now  # noqa: E402
 
 from .fake import FakeApi  # noqa: E402
 
@@ -26,7 +26,7 @@ def config(tmp_path: Path) -> Config:
     cfg.token = "1:test"
     cfg.owner = CURATOR
     cfg.review_chat = -100500
-    cfg.station_name = "Tonearm"
+    cfg.station_name = "minimalma"
     return cfg
 
 

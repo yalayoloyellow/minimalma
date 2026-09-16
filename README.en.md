@@ -1,4 +1,4 @@
-# Tonearm
+# minimalma
 
 A curated music streaming service that runs entirely inside a Telegram bot.
 
@@ -10,7 +10,7 @@ nothing to host beyond the bot itself.
 Start it with a bot token and nothing else:
 
 ```bash
-uv tool install git+https://github.com/yalayoloyellow/tonearm && tonearm setup && tonearm desk
+uv tool install git+https://github.com/yalayoloyellow/tonearm && minimalma setup && minimalma desk
 ```
 
 [![CI](https://github.com/yalayoloyellow/tonearm/actions/workflows/ci.yml/badge.svg)](https://github.com/yalayoloyellow/tonearm/actions/workflows/ci.yml)
@@ -111,9 +111,9 @@ pip install git+https://github.com/yalayoloyellow/tonearm
 
 ```bash
 # or just clone it — there is nothing to install
-git clone https://github.com/yalayoloyellow/tonearm && cd tonearm
-python3 -m tonearm setup
-python3 -m tonearm run
+git clone https://github.com/yalayoloyellow/tonearm && cd minimalma
+python3 -m minimalma setup
+python3 -m minimalma run
 ```
 
 Requires **Python 3.9 or newer** and nothing else. `ffmpeg` is optional: with
@@ -123,33 +123,33 @@ without it every other feature behaves identically.
 ## Set up
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
-2. Run `tonearm setup`. It validates the token, asks who the first curator is,
+2. Run `minimalma setup`. It validates the token, asks who the first curator is,
    and writes the configuration.
-3. Run `tonearm run`.
+3. Run `minimalma run`.
 
 If you do not know your Telegram user id, start the bot and send it `/whoami`,
-then `tonearm curator add <id>`.
+then `minimalma curator add <id>`.
 
 Submissions can be routed to a private group so several curators see the same
 queue — give its chat id during setup. Otherwise review cards go to each
 curator directly.
 
 ```
-tonearm                           the same as tonearm desk
-tonearm desk                      the curation console, and the bot with it
-tonearm run                       the bot alone, headless (for a server)
-tonearm setup                     first-run configuration
-tonearm curator add|remove|list   manage who can publish
-tonearm doctor                    check the installation
-tonearm doctor --reindex          rebuild the search index
-tonearm backup [path]             consistent copy of the database
-tonearm export [path]             the catalogue as JSON
-tonearm digest                    send the weekly note now
+minimalma                           the same as minimalma desk
+minimalma desk                      the curation console, and the bot with it
+minimalma run                       the bot alone, headless (for a server)
+minimalma setup                     first-run configuration
+minimalma curator add|remove|list   manage who can publish
+minimalma doctor                    check the installation
+minimalma doctor --reindex          rebuild the search index
+minimalma backup [path]             consistent copy of the database
+minimalma export [path]             the catalogue as JSON
+minimalma digest                    send the weekly note now
 ```
 
-Everything lives in one directory — `~/Library/Application Support/tonearm` on
-macOS, `$XDG_DATA_HOME/tonearm` on Linux, `%APPDATA%\tonearm` on Windows.
-Override it with `TONEARM_HOME`. Backing up the service means copying one
+Everything lives in one directory — `~/Library/Application Support/minimalma` on
+macOS, `$XDG_DATA_HOME/minimalma` on Linux, `%APPDATA%\minimalma` on Windows.
+Override it with `MINIMALMA_HOME`. Backing up the service means copying one
 SQLite file.
 
 ## Configuration
@@ -159,7 +159,7 @@ worth knowing:
 
 ```jsonc
 {
-  "station_name": "Tonearm",
+  "station_name": "minimalma",
   "station_tagline": "",
   "review_chat": -1001234567890,   // where the queue goes
   "auto_approve": false,           // leave this alone; see below
@@ -251,7 +251,7 @@ Duplicates are caught three ways: identical `file_unique_id`, identical folded
 ## Architecture
 
 ```
-tonearm/
+minimalma/
   telegram.py   Bot API client: long polling, multipart, 429 backoff, error vocabulary
   db.py         SQLite schema, migrations, per-thread connections, WAL
   metadata.py   ID3/FLAC/Ogg/MP4/WAV parsing, normalisation, transliteration
@@ -279,7 +279,7 @@ is, including the alternatives that were tried and rejected.
 ## Development
 
 ```bash
-git clone https://github.com/yalayoloyellow/tonearm && cd tonearm
+git clone https://github.com/yalayoloyellow/tonearm && cd minimalma
 uv venv && uv pip install pytest ruff
 .venv/bin/python -m pytest      # 285 tests, ~30 seconds, no network
 .venv/bin/ruff check .

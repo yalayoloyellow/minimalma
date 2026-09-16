@@ -55,7 +55,7 @@ def remove_track(db: Database, track_id: int) -> None:
 
 
 def rebuild(db: Database) -> int:
-    """Re-index every approved track. Used by ``tonearm doctor --reindex``."""
+    """Re-index every approved track. Used by ``minimalma doctor --reindex``."""
     rows = db.query(
         "SELECT t.id, t.title, a.name AS artist, t.album, t.note "
         "FROM tracks t JOIN artists a ON a.id = t.artist_id "

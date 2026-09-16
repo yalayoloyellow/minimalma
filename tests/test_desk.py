@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from tonearm import catalog
-from tonearm.config import Config
-from tonearm.db import Database
+from minimalma import catalog
+from minimalma.config import Config
+from minimalma.db import Database
 
 from . import fake
 from .conftest import ARTIST
@@ -80,7 +80,7 @@ class TestAuth:
 
     def test_the_key_also_works_as_a_header(self, running) -> None:
         _desk, base, key = running
-        request = urllib.request.Request(f"{base}/api/state", headers={"X-Tonearm-Key": key})
+        request = urllib.request.Request(f"{base}/api/state", headers={"X-minimalma-Key": key})
         with urllib.request.urlopen(request, timeout=5) as response:
             assert response.status == 200
 
@@ -125,7 +125,7 @@ class TestStatic:
 
     def test_path_traversal_is_refused(self, running) -> None:
         _desk, base, key = running
-        for attempt in ("/static/../../tonearm/config.py", "/static/..%2f..%2fsetup.py"):
+        for attempt in ("/static/../../minimalma/config.py", "/static/..%2f..%2fsetup.py"):
             with pytest.raises(urllib.error.HTTPError) as caught:
                 get(base, attempt, key)
             assert caught.value.code == 404
@@ -423,10 +423,10 @@ class TestBot:
 
 class TestIsolation:
     def test_the_package_does_not_import_the_desk(self) -> None:
-        """`desk/` is optional. Nothing in `tonearm/` may depend on it."""
+        """`desk/` is optional. Nothing in `minimalma/` may depend on it."""
         import re
 
-        source = Path(__file__).resolve().parents[1] / "tonearm"
+        source = Path(__file__).resolve().parents[1] / "minimalma"
         # Column zero only: a lazy, ImportError-guarded import inside a
         # function is how an optional package is meant to be reached, and
         # cli.py uses exactly that.

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import time
 
-from tonearm import catalog, recommend
-from tonearm.config import Config
-from tonearm.db import Database
+from minimalma import catalog, recommend
+from minimalma.config import Config
+from minimalma.db import Database
 
 from .conftest import LISTENER, OTHER
 

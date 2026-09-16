@@ -26,7 +26,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger("tonearm.audio")
+log = logging.getLogger("minimalma.audio")
 
 #: Sample rate we decode to. Low enough to be cheap, high enough that a
 #: 128 kbps cutoff at ~16 kHz is still visible below Nyquist.

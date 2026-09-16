@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tonearm import config as config_mod  # noqa: E402
+from minimalma import config as config_mod  # noqa: E402
 
 from .launch import open_desk  # noqa: E402
 

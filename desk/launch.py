@@ -11,11 +11,11 @@ import logging
 import threading
 import webbrowser
 
-from tonearm.config import Config
+from minimalma.config import Config
 
 from .server import Desk, serve
 
-log = logging.getLogger("tonearm.desk")
+log = logging.getLogger("minimalma.desk")
 
 WINDOW_TITLE = "minimalma"
 WINDOW_SIZE = (1180, 780)

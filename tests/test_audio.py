@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from tonearm import audio
+from minimalma import audio
 
 needs_ffmpeg = pytest.mark.skipif(not audio.have_ffmpeg(), reason="ffmpeg is not installed")
 
@@ -193,7 +193,7 @@ class TestWithFfmpeg:
         assert audio.feature_tokens(features)
 
     def test_our_own_parser_agrees_with_ffprobe(self, real_mp3: bytes, tmp_path: Path) -> None:
-        from tonearm import metadata
+        from minimalma import metadata
 
         path = tmp_path / "p.mp3"
         path.write_bytes(real_mp3)
@@ -205,7 +205,7 @@ class TestWithFfmpeg:
         assert ours.year == 2023
 
     def test_flac_round_trip_through_our_parser(self, tmp_path: Path) -> None:
-        from tonearm import metadata
+        from minimalma import metadata
 
         target = tmp_path / "real.flac"
         subprocess.run(
@@ -233,7 +233,7 @@ class TestWithFfmpeg:
         assert tags.container == "flac"
 
     def test_m4a_round_trip_through_our_parser(self, tmp_path: Path) -> None:
-        from tonearm import metadata
+        from minimalma import metadata
 
         target = tmp_path / "real.m4a"
         subprocess.run(
@@ -263,7 +263,7 @@ class TestWithFfmpeg:
         assert tags.container == "mp4"
 
     def test_ogg_round_trip_through_our_parser(self, tmp_path: Path) -> None:
-        from tonearm import metadata
+        from minimalma import metadata
 
         target = tmp_path / "real.ogg"
         subprocess.run(
@@ -294,7 +294,7 @@ class TestWithFfmpeg:
         assert tags.artist == "Ogg Artist"
 
     def test_embedded_cover_survives_the_whole_pipeline(self, tmp_path: Path) -> None:
-        from tonearm import metadata
+        from minimalma import metadata
 
         cover = tmp_path / "cover.jpg"
         subprocess.run(

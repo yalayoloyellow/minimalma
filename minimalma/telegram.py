@@ -27,7 +27,7 @@ import urllib.request
 from collections.abc import Iterable
 from typing import Any
 
-log = logging.getLogger("tonearm.telegram")
+log = logging.getLogger("minimalma.telegram")
 
 API_ROOT = "https://api.telegram.org"
 
@@ -161,7 +161,7 @@ def _encode_multipart(
 
     ``files`` maps a form field name to ``(filename, payload)``.
     """
-    boundary = "----tonearm" + "".join(random.choice("0123456789abcdef") for _ in range(24))
+    boundary = "----minimalma" + "".join(random.choice("0123456789abcdef") for _ in range(24))
     out: list[bytes] = []
     sep = f"--{boundary}\r\n".encode()
     for name, value in fields.items():
@@ -210,7 +210,7 @@ class Api:
         self.throttle = throttle or Throttle()
         self.max_attempts = max_attempts
         self._opener = urllib.request.build_opener()
-        self._opener.addheaders = [("User-Agent", "tonearm")]
+        self._opener.addheaders = [("User-Agent", "minimalma")]
 
     # ------------------------------------------------------------------ core
     def call(

@@ -6,7 +6,7 @@ notes below should make it clear quickly whether a change will land.
 ## Getting set up
 
 ```bash
-git clone https://github.com/yalayoloyellow/tonearm && cd tonearm
+git clone https://github.com/yalayoloyellow/tonearm && cd minimalma
 uv venv && uv pip install pytest ruff
 .venv/bin/python -m pytest      # ~4 seconds, no network required
 .venv/bin/ruff check .
@@ -70,7 +70,7 @@ user would notice is not worth adding.
 
 ## Reporting bugs
 
-Include: what you did, what happened, what you expected, `tonearm doctor`
+Include: what you did, what happened, what you expected, `minimalma doctor`
 output, and — for a metadata bug — the file, or at least its first few kilobytes.
 
 Security issues go to [SECURITY.md](SECURITY.md), not the issue tracker.

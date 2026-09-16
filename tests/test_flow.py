@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from tonearm import catalog, handlers, search
-from tonearm.config import Config
-from tonearm.db import Database
+from minimalma import catalog, handlers, search
+from minimalma.config import Config
+from minimalma.db import Database
 
 from . import fake
 from .conftest import ARTIST, CURATOR, LISTENER

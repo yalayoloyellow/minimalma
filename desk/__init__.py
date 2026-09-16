@@ -1,6 +1,6 @@
 """The curation desk — an optional local window over the same catalogue.
 
-The package below ``tonearm`` stays dependency-free and knows nothing about
+The package below ``minimalma`` stays dependency-free and knows nothing about
 this directory. Delete ``desk/`` and the bot is unchanged.
 """
 

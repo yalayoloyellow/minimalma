@@ -1,43 +1,43 @@
 # Operating a station
 
-Everything below assumes `tonearm setup` has been run once.
+Everything below assumes `minimalma setup` has been run once.
 
 ## Where things live
 
 | | |
 | --- | --- |
-| macOS | `~/Library/Application Support/tonearm/` |
-| Linux | `$XDG_DATA_HOME/tonearm/`, otherwise `~/.local/share/tonearm/` |
-| Windows | `%APPDATA%\tonearm\` |
+| macOS | `~/Library/Application Support/minimalma/` |
+| Linux | `$XDG_DATA_HOME/minimalma/`, otherwise `~/.local/share/minimalma/` |
+| Windows | `%APPDATA%\minimalma\` |
 
-Override with the `TONEARM_HOME` environment variable. The directory holds
-`config.json` (mode 0600, contains the token), `tonearm.db` and `tonearm.log`.
+Override with the `MINIMALMA_HOME` environment variable. The directory holds
+`config.json` (mode 0600, contains the token), `minimalma.db` and `minimalma.log`.
 
 Back up the service by copying the database:
 
 ```bash
-tonearm backup ~/backups/tonearm-$(date +%F).db
+minimalma backup ~/backups/minimalma-$(date +%F).db
 ```
 
-`tonearm backup` uses SQLite's online backup API, so it is safe to run while
+`minimalma backup` uses SQLite's online backup API, so it is safe to run while
 the bot is serving traffic. A plain `cp` of a WAL database is not.
 
 ## Running it as a service
 
 ### systemd (Linux)
 
-`/etc/systemd/system/tonearm.service`:
+`/etc/systemd/system/minimalma.service`:
 
 ```ini
 [Unit]
-Description=Tonearm
+Description=minimalma
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=tonearm
-ExecStart=/usr/local/bin/tonearm run
+User=minimalma
+ExecStart=/usr/local/bin/minimalma run
 Restart=always
 RestartSec=10
 
@@ -46,21 +46,21 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-StateDirectory=tonearm
-Environment=TONEARM_HOME=/var/lib/tonearm
+StateDirectory=minimalma
+Environment=MINIMALMA_HOME=/var/lib/minimalma
 
 [Install]
 WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl enable --now tonearm
-journalctl -u tonearm -f
+sudo systemctl enable --now minimalma
+journalctl -u minimalma -f
 ```
 
 ### launchd (macOS)
 
-`~/Library/LaunchAgents/com.tonearm.plist`:
+`~/Library/LaunchAgents/com.minimalma.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -68,21 +68,21 @@ journalctl -u tonearm -f
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key>            <string>com.tonearm</string>
+  <key>Label</key>            <string>com.minimalma</string>
   <key>ProgramArguments</key> <array>
-    <string>/usr/local/bin/tonearm</string>
+    <string>/usr/local/bin/minimalma</string>
     <string>run</string>
   </array>
   <key>RunAtLoad</key>        <true/>
   <key>KeepAlive</key>        <true/>
-  <key>StandardOutPath</key>  <string>/tmp/tonearm.out</string>
-  <key>StandardErrorPath</key><string>/tmp/tonearm.err</string>
+  <key>StandardOutPath</key>  <string>/tmp/minimalma.out</string>
+  <key>StandardErrorPath</key><string>/tmp/minimalma.err</string>
 </dict>
 </plist>
 ```
 
 ```bash
-launchctl load ~/Library/LaunchAgents/com.tonearm.plist
+launchctl load ~/Library/LaunchAgents/com.minimalma.plist
 ```
 
 ### Docker
@@ -95,16 +95,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY . .
-ENV TONEARM_HOME=/data
+ENV MINIMALMA_HOME=/data
 VOLUME /data
-ENTRYPOINT ["python", "-m", "tonearm"]
+ENTRYPOINT ["python", "-m", "minimalma"]
 CMD ["run"]
 ```
 
 ```bash
-docker build -t tonearm .
-docker run -d --name tonearm -v tonearm-data:/data \
-  -e TONEARM_TOKEN=123456:AA... tonearm run
+docker build -t minimalma .
+docker run -d --name minimalma -v minimalma-data:/data \
+  -e MINIMALMA_TOKEN=123456:AA... minimalma run
 ```
 
 Drop the `ffmpeg` line for a smaller image; you lose the quality checks and
@@ -113,7 +113,7 @@ tempo estimation, nothing else.
 ## Health
 
 ```bash
-tonearm doctor
+minimalma doctor
 ```
 
 Reports the Python version, the config and token state, curator count, whether
@@ -121,8 +121,8 @@ Reports the Python version, the config and token state, curator count, whether
 still authenticates.
 
 ```bash
-tonearm doctor --reindex             # rebuild the FTS index
-tonearm doctor --rebuild-similarity  # recompute recommendations now
+minimalma doctor --reindex             # rebuild the FTS index
+minimalma doctor --rebuild-similarity  # recompute recommendations now
 ```
 
 Neither is normally needed — the search index is maintained on publish and
@@ -132,9 +132,9 @@ try if search misses a track you know is published.
 ## Curators
 
 ```bash
-tonearm curator list
-tonearm curator add 123456789
-tonearm curator remove 123456789
+minimalma curator list
+minimalma curator add 123456789
+minimalma curator remove 123456789
 ```
 
 The first curator added becomes the owner. Anyone can find their own id by
@@ -158,7 +158,7 @@ any quality flags. The buttons are Publish, Decline, Tags, Note and Edit.
 - **Decline** asks for a reason, which the artist sees. Skipping the reason is
   allowed; a reason is better.
 
-Nothing publishes without one of these taps. `tonearm doctor` reports how many
+Nothing publishes without one of these taps. `minimalma doctor` reports how many
 approved tracks have never been shown to anyone — that number going up means
 the catalogue is growing faster than tracks are being requested, not that the ranker is
 broken.

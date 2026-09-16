@@ -44,7 +44,7 @@ from . import audio, metadata
 from .config import Config
 from .db import Database, now
 
-log = logging.getLogger("tonearm.recommend")
+log = logging.getLogger("minimalma.recommend")
 
 #: How much each recorded interaction says about taste. ``skip`` is negative
 #: but small: a skip is weak evidence, and weighting it heavily is exactly how

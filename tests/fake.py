@@ -74,7 +74,7 @@ class FakeApi:
         params = params or {}
         self._record(method, params)
         if method == "getMe":
-            return {"id": 1, "username": "tonearm_test_bot", "first_name": "Tonearm"}
+            return {"id": 1, "username": "minimalma_test_bot", "first_name": "minimalma"}
         return True
 
     def _message(self, chat_id: int, **extra: Any) -> dict[str, Any]:

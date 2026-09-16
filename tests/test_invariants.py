@@ -11,15 +11,15 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from tonearm import catalog, handlers, i18n, recommend, ui
-from tonearm.config import Config
-from tonearm.db import Database
+from minimalma import catalog, handlers, i18n, recommend, ui
+from minimalma.config import Config
+from minimalma.db import Database
 
 from . import fake
 from .conftest import ARTIST, CURATOR, LISTENER
 from .fake import FakeApi, id3_file
 
-SOURCE = Path(__file__).resolve().parents[1] / "tonearm"
+SOURCE = Path(__file__).resolve().parents[1] / "minimalma"
 
 
 class TestNothingPlaysItself:
@@ -242,7 +242,7 @@ class TestMeasurementsDoNotJudge:
     """
 
     def test_the_analyser_returns_measurements_only(self) -> None:
-        from tonearm import audio as audio_mod
+        from minimalma import audio as audio_mod
 
         assert not hasattr(audio_mod, "quality_flags")
         assert not hasattr(audio_mod, "describe_features")
@@ -289,7 +289,7 @@ class TestCurationIsMandatory:
         bot.handle(fake.audio_message(ARTIST, "q1", "qq1", title="Unreviewed", performer="A"))
         assert engine.eligible() == []
         assert engine.daily_selection(LISTENER) == []
-        from tonearm import search as search_mod
+        from minimalma import search as search_mod
 
         assert search_mod.search(db, "Unreviewed") == []
 
@@ -367,7 +367,7 @@ class TestSourceHygiene:
         for path in sorted(SOURCE.glob("*.py")):
             for match in imports.finditer(path.read_text(encoding="utf-8")):
                 root = match.group(1).split(".")[0]
-                if root in ("tonearm", "__future__") or root in sys.builtin_module_names:
+                if root in ("minimalma", "__future__") or root in sys.builtin_module_names:
                     continue
                 spec = importlib.util.find_spec(root)
                 assert spec is not None, f"{path.name} imports unresolvable {root}"

@@ -27,7 +27,7 @@ from .i18n import LANGUAGES, normalise, t
 from .telegram import Api, TelegramError
 from .ui import pack, unpack
 
-log = logging.getLogger("tonearm.handlers")
+log = logging.getLogger("minimalma.handlers")
 
 COMMANDS = {
     "start",
