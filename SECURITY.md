@@ -11,7 +11,7 @@ This project is pre-1.0. Fixes land on `main`; there are no backport branches.
 ## Reporting a vulnerability
 
 Please report privately through GitHub's
-[private vulnerability reporting](https://github.com/yalayoloyellow/tonearm/security/advisories/new)
+[private vulnerability reporting](https://github.com/yalayoloyellow/minimalma/security/advisories/new)
 rather than opening a public issue.
 
 Include what you found, how to reproduce it, and what an attacker gets. You can

@@ -6,7 +6,7 @@ notes below should make it clear quickly whether a change will land.
 ## Getting set up
 
 ```bash
-git clone https://github.com/yalayoloyellow/tonearm && cd minimalma
+git clone https://github.com/yalayoloyellow/minimalma && cd minimalma
 uv venv && uv pip install pytest ruff
 .venv/bin/python -m pytest      # ~4 seconds, no network required
 .venv/bin/ruff check .

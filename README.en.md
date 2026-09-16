@@ -10,10 +10,10 @@ nothing to host beyond the bot itself.
 Start it with a bot token and nothing else:
 
 ```bash
-uv tool install git+https://github.com/yalayoloyellow/tonearm && minimalma setup && minimalma desk
+uv tool install git+https://github.com/yalayoloyellow/minimalma && minimalma setup && minimalma desk
 ```
 
-[![CI](https://github.com/yalayoloyellow/tonearm/actions/workflows/ci.yml/badge.svg)](https://github.com/yalayoloyellow/tonearm/actions/workflows/ci.yml)
+[![CI](https://github.com/yalayoloyellow/minimalma/actions/workflows/ci.yml/badge.svg)](https://github.com/yalayoloyellow/minimalma/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![Dependencies: none](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](pyproject.toml)
@@ -96,22 +96,22 @@ Any one of these works. The first is the shortest.
 
 ```bash
 # uv (recommended — installs an isolated tool, no virtualenv to manage)
-uv tool install git+https://github.com/yalayoloyellow/tonearm
+uv tool install git+https://github.com/yalayoloyellow/minimalma
 ```
 
 ```bash
 # pipx
-pipx install git+https://github.com/yalayoloyellow/tonearm
+pipx install git+https://github.com/yalayoloyellow/minimalma
 ```
 
 ```bash
 # pip, into a virtualenv you control
-pip install git+https://github.com/yalayoloyellow/tonearm
+pip install git+https://github.com/yalayoloyellow/minimalma
 ```
 
 ```bash
 # or just clone it — there is nothing to install
-git clone https://github.com/yalayoloyellow/tonearm && cd minimalma
+git clone https://github.com/yalayoloyellow/minimalma && cd minimalma
 python3 -m minimalma setup
 python3 -m minimalma run
 ```
@@ -279,7 +279,7 @@ is, including the alternatives that were tried and rejected.
 ## Development
 
 ```bash
-git clone https://github.com/yalayoloyellow/tonearm && cd minimalma
+git clone https://github.com/yalayoloyellow/minimalma && cd minimalma
 uv venv && uv pip install pytest ruff
 .venv/bin/python -m pytest      # 285 tests, ~30 seconds, no network
 .venv/bin/ruff check .

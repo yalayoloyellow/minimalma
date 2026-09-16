@@ -9,10 +9,10 @@
 Запускается одним токеном и больше ничем:
 
 ```bash
-uv tool install git+https://github.com/yalayoloyellow/tonearm && minimalma setup && minimalma desk
+uv tool install git+https://github.com/yalayoloyellow/minimalma && minimalma setup && minimalma desk
 ```
 
-[![CI](https://github.com/yalayoloyellow/tonearm/actions/workflows/ci.yml/badge.svg)](https://github.com/yalayoloyellow/tonearm/actions/workflows/ci.yml)
+[![CI](https://github.com/yalayoloyellow/minimalma/actions/workflows/ci.yml/badge.svg)](https://github.com/yalayoloyellow/minimalma/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![Dependencies: none](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](pyproject.toml)
@@ -185,17 +185,17 @@ Python, проведёт первую настройку, создаст `minima
 
 ```bash
 # uv — ставит изолированный инструмент, никаких venv руками
-uv tool install git+https://github.com/yalayoloyellow/tonearm
+uv tool install git+https://github.com/yalayoloyellow/minimalma
 ```
 
 ```bash
 # pipx
-pipx install git+https://github.com/yalayoloyellow/tonearm
+pipx install git+https://github.com/yalayoloyellow/minimalma
 ```
 
 ```bash
 # или просто склонировать — ставить нечего
-git clone https://github.com/yalayoloyellow/tonearm && cd minimalma
+git clone https://github.com/yalayoloyellow/minimalma && cd minimalma
 python3 -m minimalma setup
 python3 -m minimalma desk
 ```
@@ -389,7 +389,7 @@ desk/           Пульт куратора: stdlib-сервер + страни�
 ## Разработка
 
 ```bash
-git clone https://github.com/yalayoloyellow/tonearm && cd minimalma
+git clone https://github.com/yalayoloyellow/minimalma && cd minimalma
 uv venv && uv pip install pytest ruff
 .venv/bin/python -m pytest      # 285 тестов, ~30 секунд, без сети
 .venv/bin/ruff check .

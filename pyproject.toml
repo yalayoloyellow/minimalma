@@ -28,10 +28,10 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/yalayoloyellow/tonearm"
-Source = "https://github.com/yalayoloyellow/tonearm"
-Issues = "https://github.com/yalayoloyellow/tonearm/issues"
-Changelog = "https://github.com/yalayoloyellow/tonearm/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/yalayoloyellow/minimalma"
+Source = "https://github.com/yalayoloyellow/minimalma"
+Issues = "https://github.com/yalayoloyellow/minimalma/issues"
+Changelog = "https://github.com/yalayoloyellow/minimalma/blob/main/CHANGELOG.md"
 
 [project.scripts]
 minimalma = "minimalma.cli:main"

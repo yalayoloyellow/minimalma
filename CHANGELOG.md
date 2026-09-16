@@ -136,6 +136,6 @@ First public release.
 - 218 tests, including an invariants suite that pins the product's behavioural
   promises.
 
-[Unreleased]: https://github.com/yalayoloyellow/tonearm/compare/v0.2.0-alpha...HEAD
-[0.2.0-alpha]: https://github.com/yalayoloyellow/tonearm/compare/v0.1.0-alpha...v0.2.0-alpha
-[0.1.0-alpha]: https://github.com/yalayoloyellow/tonearm/releases/tag/v0.1.0-alpha
+[Unreleased]: https://github.com/yalayoloyellow/minimalma/compare/v0.2.0-alpha...HEAD
+[0.2.0-alpha]: https://github.com/yalayoloyellow/minimalma/compare/v0.1.0-alpha...v0.2.0-alpha
+[0.1.0-alpha]: https://github.com/yalayoloyellow/minimalma/releases/tag/v0.1.0-alpha
