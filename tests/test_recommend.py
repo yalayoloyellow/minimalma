@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from tonearm import recommend
+import time
+
+from tonearm import catalog, recommend
 from tonearm.config import Config
 from tonearm.db import Database
 
@@ -177,6 +179,32 @@ class TestDiscovery:
             recommend.record(db, LISTENER, track_id, "play")
         assert engine.discover(LISTENER) == []
 
+    def test_algorithmic_shelves_are_safe_for_a_cold_listener(
+        self, engine, db, seeded
+    ) -> None:
+        assert engine.new_releases(LISTENER)
+        assert engine.popular(LISTENER)
+        assert engine.following_new(LISTENER) == []
+        assert engine.similar_to_saved(LISTENER)
+
+    def test_legacy_completion_does_not_change_popular(self, engine, db, seeded) -> None:
+        before = engine.popular(LISTENER)
+        db.execute(
+            "INSERT INTO events(user_id, track_id, kind, ts, weight) VALUES(?,?,?,?,?)",
+            (LISTENER, seeded[-1], "complete", int(time.time()), 100000.0),
+        )
+        assert engine.popular(LISTENER) == before
+
+    def test_followed_and_saved_shelves_are_personal(self, engine, db, seeded) -> None:
+        catalog.set_like(db, LISTENER, seeded[0], True)
+        artist_id = int(db.scalar("SELECT artist_id FROM tracks WHERE id=?", (seeded[0],)))
+        catalog.set_follow(db, LISTENER, artist_id, True)
+        assert seeded[0] not in engine.similar_to_saved(LISTENER)
+        assert all(
+            int(row["artist_id"]) == artist_id
+            for row in catalog.tracks(db, engine.following_new(LISTENER))
+        )
+
 
 class TestMix:
     def test_is_finite_and_ordered(
@@ -227,4 +255,4 @@ class TestInteractionWeights:
         recommend.record(db, LISTENER, seeded[0], "play")
         recommend.record(db, LISTENER, seeded[0], "complete")
         row = db.one("SELECT plays, completes FROM tracks WHERE id=?", (seeded[0],))
-        assert row["plays"] == 1 and row["completes"] == 1
+        assert row["plays"] == 1 and row["completes"] == 0

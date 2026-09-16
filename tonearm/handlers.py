@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+import threading
+import time
+from collections.abc import Callable, Sequence
 from typing import Any
 
+from . import audio as audio_mod
 from . import catalog, recommend, search, ui
 from .config import Config
 from .db import Database
@@ -46,14 +49,46 @@ COMMANDS = {
 class Bot:
     """Stateless-per-update handler; all state lives in SQLite."""
 
-    def __init__(self, config: Config, db: Database, api: Api, engine: recommend.Engine):
+    def __init__(
+        self,
+        config: Config,
+        db: Database,
+        api: Api,
+        engine: recommend.Engine,
+        background: Callable[[Callable[[], None]], None] | None = None,
+    ):
         self.config = config
         self.db = db
         self.api = api
         self.engine = engine
+        self._background = background
+        self._materialising: set[int] = set()
+        self._materialising_lock = threading.Lock()
 
     # ------------------------------------------------------------ dispatch
     def handle(self, update: dict[str, Any]) -> None:
+        started = time.monotonic()
+        kind = next((name for name in ("callback_query", "inline_query", "message") if name in update), "unknown")
+        source = update.get(kind) or {}
+        tg_user = source.get("from") or {}
+        user_id = int(tg_user["id"]) if tg_user.get("id") else None
+        if kind == "callback_query":
+            kind = f"callback:{str(source.get('data') or '').split('|', 1)[0][:28]}"
+        elif kind == "message":
+            if source.get("audio") or (
+                str((source.get("document") or {}).get("mime_type") or "").startswith("audio/")
+            ):
+                kind = "message:audio"
+            elif source.get("photo"):
+                kind = "message:photo"
+            elif (source.get("text") or "").startswith("/"):
+                kind = "message:command"
+            elif source.get("document"):
+                kind = "message:document"
+            else:
+                kind = "message:text"
+        outcome = "ok"
+        error: str | None = None
         try:
             if "callback_query" in update:
                 self._on_callback(update["callback_query"])
@@ -62,12 +97,28 @@ class Bot:
             elif "message" in update:
                 self._on_message(update["message"])
         except TelegramError as exc:
+            outcome = "telegram_error"
+            error = str(exc.description)[:500]
             if exc.blocked_by_user:
                 log.info("dropped update: %s", exc.description)
             else:
                 log.exception("telegram error while handling update: %s", exc)
         except Exception:
+            outcome = "crash"
+            error = "handler exception"
             log.exception("handler crashed on update %s", update.get("update_id"))
+        finally:
+            try:
+                self.db.diagnostic(
+                    kind,
+                    outcome,
+                    update_id=int(update["update_id"]) if update.get("update_id") is not None else None,
+                    user_id=user_id,
+                    duration=int((time.monotonic() - started) * 1000),
+                    error=error,
+                )
+            except Exception:
+                log.exception("could not persist update diagnostics")
 
     # --------------------------------------------------------------- state
     def _user(self, tg_user: dict[str, Any]) -> dict[str, Any]:
@@ -344,6 +395,16 @@ class Bot:
             self.api.send_message(chat_id, t(lang, "submit.failed"))
             return
 
+        if result.release_id:
+            release_cover = result.cover_file_id or catalog.release_cover(self.db, result.release_id)
+            if release_cover:
+                notify = (
+                    (lambda: self._notify_curators(result.release_id))
+                    if (result.track_no or 1) == 1 and catalog.is_complete(self.db, result.release_id)
+                    else None
+                )
+                self._schedule_materialise(result.release_id, release_cover, notify)
+
         catalog.note_submission(self.db, user_id, day)
         ahead = max(0, catalog.pending_releases_total(self.db) - 1)
         body = t(
@@ -377,13 +438,6 @@ class Bot:
 
         # One card per release, not one per track: a ten-track album should not
         # produce ten notifications.
-        if (
-            (result.track_no or 1) == 1
-            and result.release_id
-            and catalog.is_complete(self.db, result.release_id)
-        ):
-            self._notify_curators(result.release_id)
-
     def _notify_curators(self, release_id: int) -> None:
         """Push a review card to the review chat, or to each curator directly."""
         item = catalog.release(self.db, release_id)
@@ -522,6 +576,23 @@ class Bot:
             ack()
             self._do_discover(chat_id, user)
 
+        elif action == "cov" and args:
+            release_id = int(args[0])
+            owner = self.db.scalar(
+                "SELECT submitted_by FROM releases WHERE id=? AND status=?",
+                (release_id, catalog.STATUS_PENDING),
+            )
+            if owner is None or int(owner) != user_id:
+                ack(t(lang, "common.not_found"), alert=True)
+                return
+            self._set_state(user_id, f"covr:{release_id}")
+            ack()
+            self.show(
+                chat_id,
+                user,
+                ui.prompt(lang, t(lang, "cover.needed"), cancel_to="submit"),
+            )
+
         elif action == "tag" and args:
             ack()
             self._render_tag(chat_id, user, args[0])
@@ -614,6 +685,8 @@ class Bot:
             self._render_home(chat_id, user)
         elif target == "today":
             self._render_today(chat_id, user)
+        elif target in ("for_you", "new_week", "popular", "following_new", "similar_saved"):
+            self._render_shelf(chat_id, user, target)
         elif target == "discover":
             self._render_discover(chat_id, user)
         elif target == "search":
@@ -656,6 +729,46 @@ class Bot:
         else:
             self._render_home(chat_id, user)
 
+    def _render_shelf(self, chat_id: int, user: dict[str, Any], target: str) -> None:
+        """Render one stable discovery shelf without introducing a new store.
+
+        The shelf is a view over approved catalogue rows. Track ids are kept in
+        the normal sequence state, so existing play/next/save behaviour works
+        identically for every algorithmic source.
+        """
+        lang = self._lang(user)
+        user_id = int(user["id"])
+        if target == "for_you":
+            ids = self.engine.daily_selection(user_id)
+            title = t(lang, "nav.for_you")
+        elif target == "new_week":
+            ids = self.engine.new_releases(user_id, days=7)
+            title = t(lang, "nav.new_week")
+        elif target == "popular":
+            ids = self.engine.popular(user_id, days=30)
+            title = t(lang, "nav.popular")
+        elif target == "following_new":
+            ids = self.engine.following_new(user_id)
+            title = t(lang, "nav.following_new")
+        else:
+            ids = self.engine.similar_to_saved(user_id)
+            title = t(lang, "nav.similar_saved")
+        items = catalog.tracks(self.db, ids)
+        self._set_data(user, {"seq": [item["id"] for item in items], "label": title})
+        self.show(
+            chat_id,
+            user,
+            ui.track_list(
+                lang,
+                title.upper(),
+                "",
+                items,
+                "play",
+                extra_rows=[[ui.button(t(lang, "nav.home"), pack("nav", "home"))]],
+                empty=t(lang, "common.none"),
+            ),
+        )
+
     def _counts(self) -> dict[str, int]:
         return {
             "releases": int(
@@ -688,13 +801,6 @@ class Bot:
         return ids, played
 
     def _render_start(self, chat_id: int, user: dict[str, Any]) -> None:
-        lang = self._lang(user)
-        text = (
-            f"<b>{ui.esc(self.config.station_name)}</b>\n"
-            f"<i>{ui.esc(self.config.station_tagline or t(lang, 'app.tagline'))}</i>\n\n"
-            f"{t(lang, 'start.body')}"
-        )
-        self.api.send_message(chat_id, text)
         self._render_home(chat_id, user, fresh=True)
 
     def _render_home(self, chat_id: int, user: dict[str, Any], fresh: bool = False) -> None:
@@ -981,7 +1087,6 @@ class Bot:
         sequence = data.get("seq") or []
         position = sequence.index(track_id) if track_id in sequence else None
         self._send_track(chat_id, user, item, position, len(sequence) if sequence else None)
-        self._render_home(chat_id, user, fresh=True)
 
     def _play_sequence_step(self, chat_id: int, user: dict[str, Any], index: int) -> None:
         int(user["id"])
@@ -1038,7 +1143,6 @@ class Bot:
             self._render_home(chat_id, user)
             return
         self._send_track(chat_id, user, item)
-        self._render_home(chat_id, user, fresh=True)
 
     # ----------------------------------------------------------- moderation
     def _render_queue(self, chat_id: int, user: dict[str, Any]) -> None:
@@ -1110,6 +1214,10 @@ class Bot:
     ) -> None:
         lang = self._lang(user)
         item = catalog.reject_release(self.db, release_id, int(user["id"]), reason)
+        if item is None:
+            self.api.send_message(chat_id, t(lang, "mod.already_decided"))
+            self._render_queue(chat_id, user)
+            return
         self.engine.invalidate()
         if item and item["tracks"]:
             self._notify_artist(
@@ -1141,13 +1249,105 @@ class Bot:
             self.api.send_message(chat_id, t(lang, "cover.not_image"))
             return
         catalog.set_release_cover(self.db, release_id, file_id)
+        self._schedule_materialise(
+            release_id,
+            file_id,
+            lambda: self._notify_curators(release_id)
+            if catalog.is_complete(self.db, release_id)
+            else None,
+        )
         self._set_state(user_id)
         self.api.send_message(chat_id, t(lang, "cover.saved"))
         # Artwork was the last thing missing, so the release joins the queue
         # now — and this is the moment the curators hear about it at all.
-        if catalog.is_complete(self.db, release_id):
-            self._notify_curators(release_id)
         self._render_submit(chat_id, user)
+
+    def _schedule_materialise(
+        self,
+        release_id: int,
+        cover_file_id: str,
+        on_done: Callable[[], None] | None = None,
+    ) -> None:
+        with self._materialising_lock:
+            if release_id in self._materialising:
+                return
+            self._materialising.add(release_id)
+
+        def task() -> None:
+            try:
+                self._materialise_track_covers(release_id, cover_file_id)
+            except Exception:
+                # A failed re-upload must never poison the bot worker or leave
+                # a Future exception invisible in the background executor.
+                log.exception("track artwork materialisation failed for release %s", release_id)
+            finally:
+                with self._materialising_lock:
+                    self._materialising.discard(release_id)
+                if on_done is not None:
+                    on_done()
+
+        if self._background:
+            try:
+                self._background(task)
+            except RuntimeError:
+                # Service shutdown may race with the last Telegram update.
+                # Keep the catalogue consistent and leave the old audio
+                # usable instead of turning shutdown into a handler error.
+                with self._materialising_lock:
+                    self._materialising.discard(release_id)
+                log.info("artwork queue is closed; skipped release %s", release_id)
+        else:
+            task()
+
+    def _materialise_track_covers(self, release_id: int, cover_file_id: str) -> None:
+        """Give each coverless Telegram audio its own thumbnail when possible.
+
+        Telegram binds thumbnails at upload time. Existing file_ids therefore
+        have to be recreated; files over Telegram's download limit remain
+        playable and retain the release-level artwork instead.
+        """
+        cover = self.api.download(cover_file_id, limit=10 * 1024 * 1024)
+        if not cover:
+            return
+        # A release photo may be a full-resolution upload.  Audio thumbnails
+        # have a much tighter Telegram limit, so make a compact JPEG while
+        # keeping the original Telegram photo untouched for release pages.
+        compact_cover = audio_mod.normalise_cover(cover, max_side=320) or cover
+        archive_chat = self.config.review_chat or self.config.owner or (
+            self.config.curators[0] if self.config.curators else None
+        )
+        if not archive_chat:
+            log.info("cannot recreate audio covers without an archive chat")
+            return
+        rows = self.db.query(
+            "SELECT id, file_id, mime, title, duration, artist_id FROM tracks "
+            "WHERE release_id=? AND cover_file_id IS NULL ORDER BY track_no, id",
+            (release_id,),
+        )
+        for row in rows:
+            try:
+                audio = self.api.download(str(row["file_id"]))
+                if not audio:
+                    continue
+                result = self.api.send_audio(
+                    int(archive_chat),
+                    audio,
+                    filename="audio.mp3",
+                    thumbnail_bytes=compact_cover,
+                    title=str(row["title"]),
+                    performer=str(
+                        self.db.scalar(
+                            "SELECT name FROM artists WHERE id=?", (int(row["artist_id"]),)
+                        )
+                        or "Unknown"
+                    ),
+                    duration=int(row["duration"] or 0) or None,
+                )
+                new_id = (result or {}).get("audio", {}).get("file_id") if result else None
+                if new_id:
+                    catalog.set_track_file(self.db, int(row["id"]), str(new_id), cover_file_id)
+            except Exception as exc:
+                log.warning("could not materialise artwork for track %s: %s", row["id"], exc)
 
     def _notify_artist(self, item: dict[str, Any], approved: bool) -> None:
         """The one message this service sends without being asked.

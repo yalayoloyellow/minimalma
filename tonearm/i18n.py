@@ -20,11 +20,16 @@ DEFAULT = "en"
 STRINGS: dict[str, dict[str, str]] = {
     # ------------------------------------------------------------- shell
     "app.tagline": {
-        "en": "Hand-picked music. Nothing plays itself.",
-        "ru": "Музыка, отобранная вручную. Ничто не играет само.",
+        "en": "Independent music, selected by people.",
+        "ru": "Независимая музыка, отобранная людьми.",
     },
     "nav.home": {"en": "Home", "ru": "Главная"},
     "nav.today": {"en": "Today", "ru": "Сегодня"},
+    "nav.for_you": {"en": "For you", "ru": "Для вас"},
+    "nav.new_week": {"en": "New this week", "ru": "Новое за неделю"},
+    "nav.popular": {"en": "Now listening", "ru": "Сейчас слушают"},
+    "nav.following_new": {"en": "From followed artists", "ru": "От подписок"},
+    "nav.similar_saved": {"en": "Like your saved music", "ru": "Похоже на сохранённое"},
     "nav.discover": {"en": "Discover", "ru": "Найти"},
     "nav.search": {"en": "Search", "ru": "Поиск"},
     "nav.library": {"en": "Library", "ru": "Библиотека"},
@@ -55,16 +60,8 @@ STRINGS: dict[str, dict[str, str]] = {
     # ------------------------------------------------------------- start
     "start.title": {"en": "Welcome", "ru": "Здравствуйте"},
     "start.body": {
-        "en": (
-            "Every track here was listened to by a person before it reached you.\n\n"
-            "There is a small selection each day. When it runs out, it runs out — "
-            "that is the point."
-        ),
-        "ru": (
-            "Каждый трек здесь прослушал человек, прежде чем тот дошёл до вас.\n\n"
-            "Каждый день — небольшая подборка. Когда она заканчивается, она "
-            "заканчивается: в этом и смысл."
-        ),
+        "en": "Independent releases and new artists.",
+        "ru": "Нишевые релизы и новые артисты.",
     },
     "home.catalogue": {
         "en": "{releases} releases · {tracks} tracks · {artists} artists",
@@ -74,7 +71,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Today · {left} of {total} left",
         "ru": "Сегодня · осталось {left} из {total}",
     },
-    "home.today_done": {"en": "Today · finished", "ru": "Сегодня · прослушано"},
+    "home.today_done": {"en": "Today · all requested", "ru": "Сегодня · всё запрошено"},
     # ------------------------------------------------------------- today
     "today.title": {"en": "TODAY", "ru": "СЕГОДНЯ"},
     "today.intro": {
@@ -89,12 +86,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": (
             "That is all for today.\n\n"
             "A new selection appears tomorrow. Nothing is being withheld from you — "
-            "there simply is no more."
+            "there are simply no more tracks in this selection."
         ),
         "ru": (
             "На сегодня всё.\n\n"
             "Новая подборка появится завтра. От вас ничего не прячут — "
-            "просто больше нет."
+            "в этой подборке просто больше нет треков."
         ),
     },
     # ---------------------------------------------------------- discover
@@ -111,8 +108,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": ("Запросы на сегодня исчерпаны.\n\nДневная подборка и библиотека никуда не делись."),
     },
     "discover.exhausted": {
-        "en": "You have heard everything in the catalogue. Genuinely.",
-        "ru": "Вы прослушали весь каталог. Правда.",
+        "en": "There are no more tracks to request right now.",
+        "ru": "Сейчас больше нет треков для запроса.",
     },
     "discover.request": {"en": "Bring {count} more", "ru": "Принести ещё {count}"},
     # ------------------------------------------------------------ search
@@ -127,7 +124,7 @@ STRINGS: dict[str, dict[str, str]] = {
     "library.title": {"en": "LIBRARY", "ru": "БИБЛИОТЕКА"},
     "library.saved": {"en": "Saved", "ru": "Сохранённое"},
     "library.following": {"en": "Following", "ru": "Подписки"},
-    "library.history": {"en": "Recently played", "ru": "Недавно звучало"},
+    "library.history": {"en": "Recently requested", "ru": "Недавно запрошено"},
     "library.empty": {
         "en": "Nothing saved yet. Use Save under any track.",
         "ru": "Пока ничего не сохранено. Нажмите «Сохранить» под треком.",
@@ -239,6 +236,10 @@ STRINGS: dict[str, dict[str, str]] = {
     "mod.title": {"en": "REVIEW QUEUE", "ru": "ОЧЕРЕДЬ"},
     "mod.empty": {"en": "The queue is empty.", "ru": "Очередь пуста."},
     "mod.count": {"en": "{count} waiting", "ru": "Ожидают: {count}"},
+    "mod.already_decided": {
+        "en": "This release has already been decided.",
+        "ru": "По этому релизу уже приняли решение.",
+    },
     "mod.approve": {"en": "Publish", "ru": "Опубликовать"},
     "mod.reject": {"en": "Decline", "ru": "Отклонить"},
     "mod.edit": {"en": "Edit", "ru": "Правка"},
@@ -281,8 +282,8 @@ STRINGS: dict[str, dict[str, str]] = {
     "settings.data": {"en": "My data", "ru": "Мои данные"},
     "settings.forget": {"en": "Erase my history", "ru": "Стереть мою историю"},
     "settings.forget_done": {
-        "en": "Your listening history and saved tracks have been erased.",
-        "ru": "История прослушивания и сохранённое стёрты.",
+        "en": "Your request history and saved tracks have been erased.",
+        "ru": "История запросов и сохранённое стёрты.",
     },
     "settings.forget_confirm": {
         "en": "This erases your library and history for good. Press again to confirm.",
@@ -291,30 +292,8 @@ STRINGS: dict[str, dict[str, str]] = {
     # --------------------------------------------------------------- help
     "help.title": {"en": "ABOUT", "ru": "О СЕРВИСЕ"},
     "help.body": {
-        "en": (
-            "<b>What this is</b>\n"
-            "A small station. Everything is chosen by a person, one track at a time.\n\n"
-            "<b>What it does not do</b>\n"
-            "It does not autoplay. It does not have an endless feed. "
-            "It does not show play counts, streaks or badges, and it will not "
-            "notify you unless you ask it to.\n\n"
-            "<b>Sending your own music</b>\n"
-            "Use Submit. Everything is listened to. You will get an answer either way.\n\n"
-            "<b>Commands</b>\n"
-            "/today · /discover · /search · /library · /submit · /settings"
-        ),
-        "ru": (
-            "<b>Что это</b>\n"
-            "Небольшая станция. Всё отбирает человек, трек за треком.\n\n"
-            "<b>Чего здесь нет</b>\n"
-            "Нет автовоспроизведения. Нет бесконечной ленты. "
-            "Не показываются счётчики прослушиваний, серии и значки, "
-            "и уведомлений не будет, пока вы сами их не включите.\n\n"
-            "<b>Своя музыка</b>\n"
-            "Кнопка «Прислать». Всё прослушивается. Ответ придёт в любом случае.\n\n"
-            "<b>Команды</b>\n"
-            "/today · /discover · /search · /library · /submit · /settings"
-        ),
+        "en": "/today · /discover · /search · /library · /submit · /settings",
+        "ru": "/today · /discover · /search · /library · /submit · /settings",
     },
     # ------------------------------------------------------------ releases
     "nav.releases": {"en": "Releases", "ru": "Релизы"},
@@ -380,8 +359,8 @@ STRINGS: dict[str, dict[str, str]] = {
     "stats.title": {"en": "STATION", "ru": "СТАНЦИЯ"},
     "stats.mine": {"en": "My tracks", "ru": "Мои треки"},
     "stats.line": {
-        "en": "{title} · {listeners} listeners · {likes} saved",
-        "ru": "{title} · слушателей: {listeners} · сохранений: {likes}",
+        "en": "{title} · {listeners} requests · {likes} saved",
+        "ru": "{title} · запросов: {listeners} · сохранений: {likes}",
     },
     "stats.no_tracks": {
         "en": "You have no published tracks yet.",

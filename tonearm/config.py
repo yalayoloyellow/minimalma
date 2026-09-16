@@ -103,7 +103,7 @@ class Config:
     #: Default interface language for new users.
     lang: str = "en"
     #: Public name shown in the bot's own copy.
-    station_name: str = "Tonearm"
+    station_name: str = "minimalma"
     #: One line shown on the start screen.
     station_tagline: str = ""
     limits: Limits = field(default_factory=Limits)
@@ -203,7 +203,7 @@ def load(home: Path | None = None) -> Config:
         review = raw.get("review_chat")
         cfg.review_chat = int(review) if review else None
         cfg.lang = str(raw.get("lang") or "en")
-        cfg.station_name = str(raw.get("station_name") or "Tonearm")
+        cfg.station_name = str(raw.get("station_name") or "minimalma")
         cfg.station_tagline = str(raw.get("station_tagline") or "")
         cfg.auto_approve = bool(raw.get("auto_approve", False))
         cfg.require_cover = bool(raw.get("require_cover", True))

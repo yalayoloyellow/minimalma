@@ -1,0 +1,30 @@
+#!/bin/zsh
+
+set -e
+
+fail() {
+  /usr/bin/osascript -e 'on run argv
+    display alert "minimalma не запустился" message (item 1 of argv) as critical
+  end run' "$1" >/dev/null 2>&1
+  exit 1
+}
+
+APP="${0:A:h:h:h:h}"
+LOG="$HOME/Library/Logs/minimalma.log"
+[[ -f $APP/tonearm/__main__.py ]] || fail "рядом с приложением нет файлов minimalma: $APP"
+
+PY=""
+for cand in python3.13 python3.12 python3.11 python3.10 python3.9 python3 \
+            /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+  bin=$(command -v "$cand" 2>/dev/null) || continue
+  if "$bin" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,9) else 1)' 2>/dev/null; then
+    PY="$bin"
+    break
+  fi
+done
+[[ -n $PY ]] || fail "нужен Python 3.9 или новее. Запусти установить.command."
+
+mkdir -p "${LOG:h}"
+cd "$APP"
+"$PY" -m tonearm >>"$LOG" 2>&1 &!
+exit 0

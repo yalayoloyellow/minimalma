@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from tonearm import catalog, handlers, search
 from tonearm.config import Config
 from tonearm.db import Database
@@ -17,6 +19,18 @@ def screen_button(api: FakeApi, prefix: str) -> str:
     return data
 
 
+class TestDiagnostics:
+    def test_update_diagnostics_keep_action_without_message_content(
+        self, bot: handlers.Bot, db: Database
+    ) -> None:
+        bot.handle(fake.message(LISTENER, "/start"))
+        row = db.one("SELECT kind, outcome, error FROM diagnostics ORDER BY id DESC LIMIT 1")
+        assert row is not None
+        assert row["kind"] == "message:command"
+        assert row["outcome"] == "ok"
+        assert row["error"] is None
+
+
 class TestOnboarding:
     def test_start_creates_a_user_and_a_single_screen(
         self, bot: handlers.Bot, api: FakeApi, db: Database
@@ -24,17 +38,17 @@ class TestOnboarding:
         bot.handle(fake.message(LISTENER, "/start"))
         row = db.one("SELECT * FROM users WHERE id=?", (LISTENER,))
         assert row is not None and row["screen_msg"]
-        assert len(api.of("sendMessage")) == 2  # the welcome note, then the screen
+        assert len(api.of("sendMessage")) == 1  # one editable home screen
 
     def test_browsing_edits_the_screen_instead_of_adding_messages(
         self, bot: handlers.Bot, api: FakeApi, seeded: list[int]
     ) -> None:
         bot.handle(fake.message(LISTENER, "/start"))
         api.clear()
-        for target in ("today", "library", "artists", "mixes", "settings", "help", "home"):
+        for target in ("for_you", "new_week", "popular", "today", "library", "artists", "mixes", "settings", "help", "home"):
             bot.handle(fake.callback(LISTENER, f"nav|{target}"))
         assert api.of("sendMessage") == []
-        assert len(api.of("editMessageText")) == 7
+        assert len(api.of("editMessageText")) == 10
 
     def test_language_can_be_switched(self, bot: handlers.Bot, api: FakeApi, db: Database) -> None:
         bot.handle(fake.message(LISTENER, "/start"))
@@ -44,6 +58,22 @@ class TestOnboarding:
 
 
 class TestSubmission:
+    def test_intake_keeps_audio_in_telegram_not_on_local_disk(
+        self, bot: handlers.Bot, api: FakeApi, db: Database, config: Config
+    ) -> None:
+        api.files["locality-audio"] = b"audio-bytes"
+        bot.handle(
+            fake.audio_message(
+                ARTIST, "locality-audio", "locality-unique", title="Remote", performer="A"
+            )
+        )
+        local_media = [
+            path for path in config.home.rglob("*")
+            if path.is_file() and path.suffix.lower() in {".mp3", ".m4a", ".wav", ".ogg", ".flac"}
+        ]
+        assert local_media == []
+        assert db.scalar("SELECT file_id FROM tracks WHERE file_unique_id='locality-unique'") == "locality-audio"
+
     def test_audio_becomes_a_pending_track(
         self, bot: handlers.Bot, api: FakeApi, db: Database
     ) -> None:
@@ -427,6 +457,18 @@ class TestPrivacy:
 
 
 class TestRobustness:
+    @pytest.mark.parametrize(
+        "data",
+        ["", "play|", "like|abc", "artist|-", "follow|999999999999999999999", "unknown|x"],
+    )
+    def test_malformed_callbacks_are_safe(
+        self, bot: handlers.Bot, api: FakeApi, db: Database, data: str
+    ) -> None:
+        before = int(db.scalar("SELECT COUNT(*) FROM events", default=0))
+        bot.handle(fake.callback(LISTENER, data))
+        assert api.of("answerCallbackQuery")
+        assert int(db.scalar("SELECT COUNT(*) FROM events", default=0)) == before
+
     def test_a_stale_callback_does_not_crash(self, bot: handlers.Bot, api: FakeApi) -> None:
         bot.handle(fake.callback(LISTENER, "play|999999"))
         bot.handle(fake.callback(LISTENER, "artist|999999"))
@@ -442,6 +484,19 @@ class TestRobustness:
             bot.handle(fake.callback(LISTENER, data))
             assert api.of("answerCallbackQuery"), data
 
+    def test_discovery_shelves_keep_a_playable_sequence(
+        self, bot: handlers.Bot, api: FakeApi, seeded: list[int], db: Database
+    ) -> None:
+        for target in ("for_you", "new_week", "popular", "similar_saved"):
+            api.clear()
+            bot.handle(fake.callback(LISTENER, f"nav|{target}"))
+            assert api.last_screen()
+            buttons = api.buttons()
+            play = next((b["callback_data"] for b in buttons if b["callback_data"].startswith("play|")), None)
+            if play:
+                bot.handle(fake.callback(LISTENER, play))
+                assert api.of("sendAudio")
+
     def test_unknown_commands_fall_through_to_search(
         self, bot: handlers.Bot, api: FakeApi, seeded: list[int]
     ) -> None:
@@ -449,6 +504,6 @@ class TestRobustness:
         assert isinstance(api.last_screen(), str)
 
     def test_empty_catalogue_screens_render(self, bot: handlers.Bot, api: FakeApi) -> None:
-        for target in ("home", "today", "discover", "library", "artists", "mixes", "search"):
+        for target in ("home", "for_you", "new_week", "popular", "today", "discover", "library", "artists", "mixes", "search"):
             bot.handle(fake.callback(LISTENER, f"nav|{target}"))
             assert api.last_screen()

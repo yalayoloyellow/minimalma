@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import os
 import queue
 import signal
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any
 
@@ -24,6 +26,7 @@ log = logging.getLogger("tonearm")
 WORKERS = 4
 POLL_TIMEOUT = 25
 MAINTENANCE_INTERVAL = 300
+MAX_POLL_CONFLICTS = 3
 
 
 def configure_logging(config: Config) -> None:
@@ -57,12 +60,16 @@ class Service:
         self.db = db or Database(config.database_path)
         self.api = api or Api(config.token)
         self.engine = recommend.Engine(self.db, config)
-        self.bot = handlers.Bot(config, self.db, self.api, self.engine)
+        self._media_jobs = ThreadPoolExecutor(max_workers=1, thread_name_prefix="media")
+        self.bot = handlers.Bot(
+            config, self.db, self.api, self.engine, background=self._media_jobs.submit
+        )
         self._stop = threading.Event()
         self._queues: list[queue.Queue[dict[str, Any] | None]] = [
             queue.Queue(maxsize=256) for _ in range(WORKERS)
         ]
         self._threads: list[threading.Thread] = []
+        self._instance_lock_fd: int | None = None
 
     # ----------------------------------------------------------- lifecycle
     def start(self) -> dict[str, Any]:
@@ -77,6 +84,15 @@ class Service:
         return identity
 
     def run(self) -> None:
+        if not self._acquire_instance_lock():
+            log.error("minimalma is already running")
+            return
+        try:
+            self._run_locked()
+        finally:
+            self._release_instance_lock()
+
+    def _run_locked(self) -> None:
         identity = self.start()
         log.info(
             "%s is live as @%s · %s",
@@ -86,7 +102,7 @@ class Service:
         )
         if not self.config.curators and not self.config.owner:
             log.warning(
-                "no curators configured — run 'tonearm curator add <telegram id>' "
+                "no curators configured — add one in the minimalma desk "
                 "or nothing can be published"
             )
 
@@ -104,6 +120,42 @@ class Service:
             self._poll()
         finally:
             self.shutdown()
+
+    def _acquire_instance_lock(self) -> bool:
+        """Allow only one polling process for this station on this machine."""
+        try:
+            import fcntl
+        except ImportError:  # pragma: no cover - Windows has no flock
+            return True
+        path = self.config.home / "minimalma.lock"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                os.chmod(path, 0o600)
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (BlockingIOError, OSError):
+                os.close(fd)
+                return False
+        except OSError:
+            log.warning("could not create the instance lock; continuing")
+            return True
+        self._instance_lock_fd = fd
+        return True
+
+    def _release_instance_lock(self) -> None:
+        if self._instance_lock_fd is None:
+            return
+        try:
+            import fcntl
+            fcntl.flock(self._instance_lock_fd, fcntl.LOCK_UN)
+        except (ImportError, OSError):  # pragma: no cover
+            pass
+        try:
+            os.close(self._instance_lock_fd)
+        except OSError:  # pragma: no cover
+            pass
+        self._instance_lock_fd = None
 
     def _install_signals(self) -> None:
         def stop(signum: int, _frame: Any) -> None:
@@ -127,24 +179,32 @@ class Service:
                 pass
         for thread in self._threads:
             thread.join(timeout=5)
+        self._media_jobs.shutdown(wait=True, cancel_futures=True)
         self.db.close()
 
     # ---------------------------------------------------------------- loop
     def _poll(self) -> None:
         offset = int(self.db.get_meta("update_offset", 0) or 0)
         failures = 0
+        conflicts = 0
         while not self._stop.is_set():
             try:
                 updates = self.api.get_updates(offset, timeout=POLL_TIMEOUT)
                 failures = 0
+                conflicts = 0
             except TelegramError as exc:
                 if exc.code == 409:
+                    conflicts += 1
+                    if conflicts >= MAX_POLL_CONFLICTS:
+                        log.error("another instance is polling this bot; stopping")
+                        self._stop.set()
+                        break
                     log.error("another instance is polling this bot; retrying in 15s")
                     self._stop.wait(15)
                     self.api.drop_webhook()
                     continue
                 if exc.code == 401:
-                    log.error("the bot token was rejected — run 'tonearm setup'")
+                    log.error("the bot token was rejected — reconnect it in minimalma")
                     self._stop.set()
                     break
                 failures += 1
@@ -189,6 +249,12 @@ class Service:
                 self.engine.maybe_rebuild()
             except Exception:
                 log.exception("similarity rebuild failed")
+            try:
+                removed = recommend.prune_events(self.db)
+                if removed:
+                    log.info("pruned %d old interaction events", removed)
+            except Exception:
+                log.exception("event retention failed")
             try:
                 if self.config.weekly_digest:
                     self.send_digest()

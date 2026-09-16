@@ -370,10 +370,18 @@ class Api:
             self._forgiving("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
         )
 
-    def send_audio(self, chat_id: int, audio: str, **kw: Any) -> dict[str, Any] | None:
-        params = {"chat_id": chat_id, "audio": audio, "parse_mode": "HTML"}
+    def send_audio(self, chat_id: int, audio: str | bytes, **kw: Any) -> dict[str, Any] | None:
+        files: dict[str, tuple[str, bytes]] = {}
+        if isinstance(audio, bytes):
+            params = {"chat_id": chat_id, "parse_mode": "HTML"}
+            files["audio"] = (str(kw.pop("filename", "audio.mp3")), audio)
+        else:
+            params = {"chat_id": chat_id, "audio": audio, "parse_mode": "HTML"}
+        thumbnail = kw.pop("thumbnail_bytes", None)
+        if isinstance(thumbnail, bytes):
+            files["thumbnail"] = ("cover.jpg", thumbnail)
         params.update(kw)
-        return self._forgiving("sendAudio", params)
+        return self._forgiving("sendAudio", params, files=files or None)
 
     def send_photo(
         self, chat_id: int, photo: Any, filename: str = "cover.jpg", **kw: Any

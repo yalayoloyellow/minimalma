@@ -87,7 +87,33 @@ class TestAuth:
     def test_the_page_itself_needs_no_key(self, running) -> None:
         _desk, base, _key = running
         with urllib.request.urlopen(f"{base}/", timeout=5) as response:
-            assert b"tonearm" in response.read().lower()
+            assert b"minimalma" in response.read().lower()
+
+
+class TestUsers:
+    def test_curator_can_be_added_and_removed(self, config, db, api):
+        desk = desk_module.Desk(config, db=db, api=api)
+        user_id = 123456
+        config.owner = 999999
+        assert desk_module.api_curator(desk, str(user_id), {"action": "add"}, {})["ok"]
+        assert user_id in config.curators
+        assert desk_module.api_curator(desk, str(user_id), {"action": "remove"}, {})["ok"]
+        assert user_id not in config.curators
+
+    def test_user_role_changes_through_the_http_api(self, running, db: Database) -> None:
+        _desk, base, key = running
+        db.execute(
+            "INSERT INTO users(id, created_at, last_seen, name, username) VALUES(?,?,?,?,?)",
+            (123457, 1, 2, "Test User", "test_user"),
+        )
+        users = api_get(base, "/api/users", key)["items"]
+        assert any(item["id"] == 123457 and item["role"] == "user" for item in users)
+        assert post(base, "/api/curator/123457", key, {"action": "add"})["ok"]
+        users = api_get(base, "/api/users", key)["items"]
+        assert any(item["id"] == 123457 and item["role"] == "curator" for item in users)
+        assert post(base, "/api/curator/123457", key, {"action": "remove"})["ok"]
+        users = api_get(base, "/api/users", key)["items"]
+        assert any(item["id"] == 123457 and item["role"] == "user" for item in users)
 
 
 class TestStatic:

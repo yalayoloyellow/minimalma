@@ -36,7 +36,9 @@ STATIC = Path(__file__).resolve().parent / "static"
 
 #: Downloaded audio is cached here so a curator can scrub a track without
 #: re-fetching it from Telegram on every seek.
-CACHE_LIMIT_BYTES = 512 * 1024 * 1024
+# Desk is a curator tool, not a second media library. Telegram remains the
+# source of truth; keep only a modest rolling scrub cache locally.
+CACHE_LIMIT_BYTES = 128 * 1024 * 1024
 
 _ROUTE = re.compile(r"^/api/(?P<name>[a-z_]+)(?:/(?P<arg>[^/?]+))?$")
 
@@ -57,6 +59,11 @@ class Desk:
         self.key = secrets.token_urlsafe(24)
         self.cache = config.home / "cache"
         self.cache.mkdir(parents=True, exist_ok=True)
+        try:
+            self.cache.chmod(0o700)
+        except OSError:  # pragma: no cover - unusual filesystems
+            pass
+        self._trim_cache()
         self._bot: Any | None = None
         self._bot_thread: threading.Thread | None = None
         self._bot_error = ""
@@ -78,7 +85,7 @@ class Desk:
             if self.bot_running:
                 return {"running": True, "error": ""}
             if not self.config.token:
-                return {"running": False, "error": "no bot token — run tonearm setup"}
+                return {"running": False, "error": "нет токена — подключите бота в настройках"}
             from tonearm.app import Service
 
             self._bot_error = ""
@@ -121,6 +128,7 @@ class Desk:
             suffix = ".mp3"
         target = self.cache / f"{row['file_unique_id']}{suffix}"
         if target.exists() and target.stat().st_size:
+            target.touch()
             return target
         try:
             blob = self.api.download(row["file_id"])
@@ -131,6 +139,10 @@ class Desk:
             return None
         temporary = target.with_suffix(target.suffix + ".part")
         temporary.write_bytes(blob)
+        try:
+            temporary.chmod(0o600)
+        except OSError:  # pragma: no cover - unusual filesystems
+            pass
         temporary.replace(target)
         self._trim_cache()
         return target
@@ -140,15 +152,23 @@ class Desk:
         row = catalog.track(self.db, track_id)
         if row is None or not row.get("cover_file_id") or self.api is None:
             return None
-        cached = self.cache / f"cover-{track_id}.img"
+        cached = self.cache / f"cover-release-{row['release_id']}.img"
         if cached.exists():
+            cached.touch()
             return cached.read_bytes()
         try:
             blob = self.api.download(row["cover_file_id"], limit=10 * 1024 * 1024)
         except (TelegramError, NetworkError):
             return None
         if blob:
-            cached.write_bytes(blob)
+            temporary = cached.with_suffix(cached.suffix + ".part")
+            temporary.write_bytes(blob)
+            try:
+                temporary.chmod(0o600)
+            except OSError:  # pragma: no cover - unusual filesystems
+                pass
+            temporary.replace(cached)
+            self._trim_cache()
         return blob
 
     def _trim_cache(self) -> None:
@@ -195,7 +215,8 @@ def _track_payload(desk: Desk, track_id: int) -> dict | None:
         "reject_reason": item.get("reject_reason") or "",
         "has_cover": bool(item.get("cover_file_id")),
         "features": features,
-        "plays": item.get("plays") or 0,
+        "requests": item.get("requests", item.get("plays")) or 0,
+        "last_requested_at": item.get("last_requested_at"),
         "likes": item.get("likes") or 0,
         "exposures": item.get("exposures") or 0,
     }
@@ -210,7 +231,7 @@ def _row_payload(item: dict) -> dict:
         "duration": item.get("duration") or 0,
         "status": item.get("status", ""),
         "note": item.get("note") or "",
-        "plays": item.get("plays") or 0,
+        "requests": item.get("requests", item.get("plays")) or 0,
         "likes": item.get("likes") or 0,
         "exposures": item.get("exposures") or 0,
         "year": item.get("year"),
@@ -231,6 +252,60 @@ def api_state(desk: Desk, _arg: str | None, _body: dict, _query: dict) -> dict:
         ),
         "tags": search.suggest_tags(desk.db, limit=40),
     }
+
+
+def api_connect(desk: Desk, _arg: str | None, body: dict, _query: dict) -> dict:
+    """Validate and persist a bot token entered in the curator desk."""
+    token = str(body.get("token") or "").strip()
+    if not token:
+        return {"ok": False, "error": "Введите токен бота"}
+    try:
+        api = Api(token)
+        identity = api.me()
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    except (TelegramError, NetworkError) as exc:
+        return {"ok": False, "error": getattr(exc, "description", str(exc))}
+    desk.config.token = token
+    desk.config.save()
+    desk.api = api
+    return {
+        "ok": True,
+        "username": identity.get("username") or "",
+        "name": identity.get("first_name") or "",
+    }
+
+
+def api_users(desk: Desk, _arg: str | None, _body: dict, _query: dict) -> dict:
+    rows = desk.db.query(
+        "SELECT id, name, username, last_seen FROM users ORDER BY last_seen DESC LIMIT 500"
+    )
+    curators = set(desk.config.curators)
+    return {"items": [{
+        "id": int(row["id"]), "name": row["name"] or "Без имени",
+        "username": row["username"] or "", "last_seen": row["last_seen"] or "",
+        "role": "owner" if desk.config.owner == int(row["id"]) else ("curator" if int(row["id"]) in curators else "user"),
+    } for row in rows]}
+
+
+def api_curator(desk: Desk, arg: str | None, body: dict, _query: dict) -> dict:
+    user_id = int(arg or 0)
+    if user_id <= 0:
+        return {"ok": False, "error": "Некорректный Telegram ID"}
+    action = str(body.get("action") or "")
+    if action == "add":
+        if desk.config.owner is None:
+            desk.config.owner = user_id
+        elif user_id != desk.config.owner and user_id not in desk.config.curators:
+            desk.config.curators.append(user_id)
+    elif action == "remove":
+        if user_id == desk.config.owner:
+            return {"ok": False, "error": "Владельца нельзя снять — сначала назначьте другого"}
+        desk.config.curators = [item for item in desk.config.curators if item != user_id]
+    else:
+        return {"ok": False, "error": "Неизвестное действие"}
+    desk.config.save()
+    return {"ok": True}
 
 
 def _release_row(item: dict) -> dict:
@@ -294,11 +369,25 @@ def api_reject_release(desk: Desk, arg: str | None, body: dict, _query: dict) ->
     desk.engine.invalidate()
     if item and item["tracks"]:
         _notify(desk, catalog.track(desk.db, int(item["tracks"][0]["id"])), approved=False)
-    return {"ok": bool(item), "release": api_release(desk, arg, {}, {})}
+    return {
+        "ok": bool(item),
+        "error": "already_decided" if item is None else "",
+        "release": api_release(desk, arg, {}, {}) if item else None,
+    }
 
 
 def api_track(desk: Desk, arg: str | None, _body: dict, _query: dict) -> dict | None:
     return _track_payload(desk, int(arg or 0))
+
+
+def api_tracks(desk: Desk, _arg: str | None, _body: dict, query: dict) -> dict:
+    """Small approved-track picker for curator playlists."""
+    limit = min(200, _int(query.get("limit"), 100))
+    rows = desk.db.query(
+        "SELECT id FROM tracks WHERE status='approved' ORDER BY published_at DESC, id DESC LIMIT ?",
+        (limit,),
+    )
+    return {"items": [_track_payload(desk, int(row["id"])) for row in rows]}
 
 
 def api_catalogue(desk: Desk, _arg: str | None, _body: dict, query: dict) -> dict:
@@ -493,12 +582,16 @@ def _notify(desk: Desk, item: dict, approved: bool) -> None:
 
 ROUTES: dict = {
     "state": api_state,
+    "connect": api_connect,
+    "users": api_users,
+    "curator": api_curator,
     "queue": api_queue,
     "release": api_release,
     "releases": api_releases,
     "approve_release": api_approve_release,
     "reject_release": api_reject_release,
     "track": api_track,
+    "tracks": api_tracks,
     "catalogue": api_catalogue,
     "artists": api_artists,
     "artist": api_artist,
@@ -568,7 +661,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "unauthorised"}, HTTPStatus.FORBIDDEN)
             return
         length = int(self.headers.get("Content-Length") or 0)
-        raw = self.rfile.read(length) if 0 < length <= 4 * 1024 * 1024 else b""
+        if length > 4 * 1024 * 1024:
+            self._send_json({"error": "request too large"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            return
+        raw = self.rfile.read(length) if length > 0 else b""
         try:
             body = json.loads(raw.decode("utf-8")) if raw else {}
         except ValueError:
@@ -584,9 +680,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             result = handler(self.desk, match.group("arg"), body, query)
-        except Exception as exc:
+        except Exception:
             log.exception("desk endpoint %s failed", path)
-            self._send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            # Exception text can contain local paths, submitted metadata, or
+            # details from a future integration. Keep it in the local log only.
+            self._send_json({"error": "internal server error"}, HTTPStatus.INTERNAL_SERVER_ERROR)
             return
         if result is None:
             self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
@@ -600,6 +698,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(blob)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
         self.end_headers()
         self.wfile.write(blob)
 
@@ -617,6 +717,8 @@ class Handler(BaseHTTPRequestHandler):
         )
         self.send_header("Content-Length", str(len(blob)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
         self.end_headers()
         self.wfile.write(blob)
 

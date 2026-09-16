@@ -227,6 +227,13 @@ def set_release_cover(db: Database, release_id: int, file_id: str) -> None:
     db.execute("UPDATE releases SET cover_file_id=? WHERE id=?", (file_id, release_id))
 
 
+def set_track_file(db: Database, track_id: int, file_id: str, cover_file_id: str) -> None:
+    db.execute(
+        "UPDATE tracks SET file_id=?, cover_file_id=? WHERE id=?",
+        (file_id, cover_file_id, track_id),
+    )
+
+
 def release(db: Database, release_id: int, only_approved: bool = False) -> dict[str, Any] | None:
     """A release with its tracks, in track order."""
     row = db.one(
@@ -383,6 +390,8 @@ def approve_release(
     item = release(db, release_id)
     if item is None:
         return None, "not_found"
+    if item.get("status") != STATUS_PENDING:
+        return None, "already_decided"
     missing = missing_for_release(db, release_id)
     if missing:
         # Unreachable through any interface — the queue filters these out — but
@@ -391,11 +400,14 @@ def approve_release(
 
     stamp = now()
     with db.transaction() as conn:
-        conn.execute(
+        cursor = conn.execute(
             "UPDATE releases SET status=?, reviewed_by=?, reviewed_at=?, published_at=?, "
-            "note=COALESCE(NULLIF(?, ''), note), reject_reason=NULL WHERE id=?",
-            (STATUS_APPROVED, curator_id, stamp, stamp, note.strip(), release_id),
+            "note=COALESCE(NULLIF(?, ''), note), reject_reason=NULL "
+            "WHERE id=? AND status=?",
+            (STATUS_APPROVED, curator_id, stamp, stamp, note.strip(), release_id, STATUS_PENDING),
         )
+        if cursor.rowcount != 1:
+            return None, "already_decided"
         conn.execute(
             "UPDATE tracks SET status=?, reviewed_by=?, reviewed_at=?, published_at=? "
             "WHERE release_id=? AND status=?",
@@ -413,13 +425,24 @@ def reject_release(
     item = release(db, release_id)
     if item is None:
         return None
+    if item.get("status") not in (STATUS_PENDING, STATUS_APPROVED):
+        return None
     stamp = now()
     with db.transaction() as conn:
-        conn.execute(
+        cursor = conn.execute(
             "UPDATE releases SET status=?, reviewed_by=?, reviewed_at=?, reject_reason=?, "
-            "published_at=NULL WHERE id=?",
-            (STATUS_REJECTED, curator_id, stamp, reason.strip()[:400] or None, release_id),
+            "published_at=NULL WHERE id=? AND status=?",
+            (
+                STATUS_REJECTED,
+                curator_id,
+                stamp,
+                reason.strip()[:400] or None,
+                release_id,
+                item["status"],
+            ),
         )
+        if cursor.rowcount != 1:
+            return None
         # Every track, not only the waiting ones: a declined release must not
         # leave published tracks behind it, which would be a state no screen
         # in the product knows how to describe.
@@ -569,6 +592,7 @@ def resolve_tags(
     telegram_tags = metadata.Tags(
         title=metadata.clean_text(payload.get("title") or ""),
         artist=metadata.clean_text(payload.get("performer") or ""),
+        album=metadata.clean_text(payload.get("album") or ""),
         duration=float(payload.get("duration") or 0) or None,
     )
     tags.merged_with(telegram_tags)
@@ -640,7 +664,21 @@ def intake(
         result.error = "duplicate_track"
         return result
 
-    cover_file_id = _store_cover(api, config, payload, tags)
+    # A Telegram photo file_id only exists after the image has been sent once.
+    # Keep embedded artwork in Telegram too, choosing an existing moderation
+    # destination before falling back to the submitter's chat.
+    cover_archive_chat = (
+        config.review_chat
+        or config.owner
+        or (config.curators[0] if config.curators else user_id)
+    )
+    # Keep these concepts separate: a Telegram audio thumbnail belongs to the
+    # track, while an archived photo belongs to the release.
+    thumbnail = payload.get("thumbnail") or payload.get("thumb") or {}
+    track_cover_file_id = (
+        str(thumbnail["file_id"]) if isinstance(thumbnail, dict) and thumbnail.get("file_id") else None
+    )
+    release_cover_file_id = _store_cover(api, config, payload, tags, cover_archive_chat)
 
     artist_id = get_or_create_artist(db, tags.artist, user_id)
     if tags.duration and not features.get("duration"):
@@ -679,7 +717,7 @@ def intake(
             unique_id,
             size or None,
             payload.get("mime_type"),
-            cover_file_id,
+            track_cover_file_id,
             STATUS_PENDING,
             user_id,
             now(),
@@ -694,15 +732,15 @@ def intake(
     result.album = tags.album
     result.year = tags.year
     result.duration = duration
-    result.cover_file_id = cover_file_id
+    result.cover_file_id = release_cover_file_id
     result.features = features
 
     # The first artwork to arrive becomes the release cover; a curator can
     # replace it later.
-    if cover_file_id:
+    if release_cover_file_id:
         db.execute(
             "UPDATE releases SET cover_file_id=COALESCE(cover_file_id, ?) WHERE id=?",
-            (cover_file_id, release_id),
+            (release_cover_file_id, release_id),
         )
     refresh_release_kind(db, release_id)
     result.release_title = release_title
@@ -713,20 +751,24 @@ def intake(
 
 
 def _store_cover(
-    api: Api | None, config: Config, payload: dict[str, Any], tags: metadata.Tags
+    api: Api | None,
+    config: Config,
+    payload: dict[str, Any],
+    tags: metadata.Tags,
+    archive_chat_id: int | None = None,
 ) -> str | None:
     """Obtain a durable photo ``file_id`` for the cover.
 
     Telegram's own thumbnail is preferred because it already *is* a photo
     file_id — no upload, nothing to lose. Only when a file has embedded art and
-    Telegram produced no thumbnail do we upload once, to the review chat, and
+    Telegram produced no thumbnail do we upload once to the archive chat and
     keep the id. The audio file itself always keeps whatever art it was
     uploaded with, so the in-player artwork never depends on any of this.
     """
     thumb = payload.get("thumbnail") or payload.get("thumb") or {}
     if isinstance(thumb, dict) and thumb.get("file_id"):
         return str(thumb["file_id"])
-    if not (tags.cover and api is not None and config.review_chat):
+    if not (tags.cover and api is not None and archive_chat_id):
         return None
     blob = audio_mod.normalise_cover(tags.cover)
     if not blob:
@@ -734,7 +776,7 @@ def _store_cover(
     name = "cover" + metadata.image_extension(tags.cover_mime)
     try:
         message = api.send_photo(
-            config.review_chat,
+            archive_chat_id,
             blob,
             filename=name,
             caption="cover archive",
@@ -861,7 +903,8 @@ def restore_release(db: Database, release_id: int) -> dict[str, Any] | None:
     Every decision is reversible; that is what makes a fast keyboard workflow
     safe to offer at all.
     """
-    if release(db, release_id) is None:
+    current = release(db, release_id)
+    if current is None or current.get("status") == STATUS_PENDING:
         return None
     with db.transaction() as conn:
         conn.execute(
@@ -887,7 +930,7 @@ def hide_release(db: Database, release_id: int, curator_id: int) -> dict[str, An
     can be withdrawn.
     """
     item = release(db, release_id)
-    if item is None:
+    if item is None or item.get("status") != STATUS_APPROVED:
         return None
     stamp = now()
     with db.transaction() as conn:
@@ -1075,8 +1118,8 @@ def publish_playlist(db: Database, playlist_id: int, published: bool = True) -> 
 
 def artist_stats(db: Database, artist_id: int) -> dict[str, int]:
     row = db.one(
-        "SELECT COUNT(*) AS tracks, COALESCE(SUM(plays),0) AS plays, "
-        "COALESCE(SUM(completes),0) AS completes, COALESCE(SUM(likes),0) AS likes, "
+        "SELECT COUNT(*) AS tracks, COALESCE(SUM(requests),0) AS requests, "
+        "COALESCE(SUM(likes),0) AS likes, "
         "COALESCE(SUM(exposures),0) AS exposures "
         "FROM tracks WHERE artist_id=? AND status='approved'",
         (artist_id,),
@@ -1085,6 +1128,9 @@ def artist_stats(db: Database, artist_id: int) -> dict[str, int]:
     stats["followers"] = int(
         db.scalar("SELECT COUNT(*) FROM follows WHERE artist_id=?", (artist_id,), default=0)
     )
+    # Compatibility for older desk clients; this is a request count, never a
+    # claim that Telegram observed playback.
+    stats["plays"] = stats.get("requests", 0)
     return {k: int(v or 0) for k, v in stats.items()}
 
 
@@ -1109,7 +1155,7 @@ def curator_report(db: Database, days: int = 7) -> dict[str, Any]:
         "listeners": int(
             db.scalar("SELECT COUNT(DISTINCT user_id) FROM events WHERE ts>=?", (since,), default=0)
         ),
-        "plays": int(
+        "requests": int(
             db.scalar(
                 "SELECT COUNT(*) FROM events WHERE kind='play' AND ts>=?", (since,), default=0
             )

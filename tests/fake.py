@@ -112,9 +112,10 @@ class FakeApi:
         self._record("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
         return self.messages.pop(message_id, None) is not None
 
-    def send_audio(self, chat_id: int, audio: str, **kw: Any) -> dict[str, Any]:
+    def send_audio(self, chat_id: int, audio: str | bytes, **kw: Any) -> dict[str, Any]:
         self._record("sendAudio", {"chat_id": chat_id, "audio": audio, **kw})
-        return self._message(chat_id, audio={"file_id": audio})
+        file_id = audio if isinstance(audio, str) else f"recreated:{self._next_id}"
+        return self._message(chat_id, audio={"file_id": file_id})
 
     def send_photo(
         self, chat_id: int, photo: Any, filename: str = "cover.jpg", **kw: Any
@@ -196,6 +197,7 @@ def audio_message(
     unique_id: str,
     title: str = "",
     performer: str = "",
+    album: str = "",
     duration: int = 180,
     file_name: str = "track.mp3",
     thumbnail: bool = False,
@@ -213,6 +215,8 @@ def audio_message(
         payload["title"] = title
     if performer:
         payload["performer"] = performer
+    if album:
+        payload["album"] = album
     if thumbnail:
         payload["thumbnail"] = {
             "file_id": f"thumb:{unique_id}",

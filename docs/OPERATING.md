@@ -160,7 +160,7 @@ any quality flags. The buttons are Publish, Decline, Tags, Note and Edit.
 
 Nothing publishes without one of these taps. `tonearm doctor` reports how many
 approved tracks have never been shown to anyone — that number going up means
-the catalogue is growing faster than it is being heard, not that the ranker is
+the catalogue is growing faster than tracks are being requested, not that the ranker is
 broken.
 
 ## Scale

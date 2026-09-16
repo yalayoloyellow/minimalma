@@ -23,17 +23,20 @@ const T = {
     reason_ph: "Причина отказа — артист её увидит",
     search: "поиск по каталогу", search_artists: "поиск по артистам",
     bot_on: "бот работает", bot_off: "бот остановлен", bot_start: "Запустить",
-    bot_stop: "Остановить", no_token: "нет токена — tonearm setup",
-    approved: "Опубликовано", rejected: "Отклонено", saved: "Сохранено",
+    token_title: "Подключить Telegram-бота", token_hint: "Вставьте токен от @BotFather",
+    token_connect: "Подключить", token_connected: "Бот подключён",
+    users: "Пользователи", make_curator: "Назначить куратором", remove_curator: "Снять права",
+    bot_stop: "Остановить", no_token: "бот не подключён",
+    approved: "Опубликовано", rejected: "Отклонено", already_decided: "Решение уже принято", saved: "Сохранено",
     hidden: "Снято", failed: "Не получилось", restored: "Возвращено в очередь",
     pending: "в очереди", catalogue_n: "в каталоге", artists_n: "артистов",
     unheard: "ни разу не показаны", listeners: "слушателей за неделю",
-    plays_n: "прослушиваний за неделю", declined_n: "отклонено за неделю",
+    plays_n: "запросов за неделю", declined_n: "отклонено за неделю",
     published_n: "опубликовано за неделю", releases_n: "релизов",
-    new_playlist: "Новый плейлист", playlist_title: "название плейлиста",
+    new_playlist: "Новый плейлист", playlist_title: "название плейлиста", playlist_desc: "описание (необязательно)", add_track: "Добавить трек", choose_track: "выберите трек",
     publish_list: "Опубликовать", unpublish: "Скрыть", remove: "убрать",
     followers: "подписчиков", saves: "сохранений", shown: "показов",
-    plays: "прослушиваний",
+    plays: "запросов",
     drop_cover: "Перетащите картинку или нажмите",
     no_cover: "Без обложки публиковать нельзя",
     no_tracks: "В релизе нет треков",
@@ -56,17 +59,20 @@ const T = {
     reason_ph: "Reason — the artist will see it",
     search: "search the catalogue", search_artists: "search artists",
     bot_on: "bot running", bot_off: "bot stopped", bot_start: "Start",
-    bot_stop: "Stop", no_token: "no token — run tonearm setup",
-    approved: "Published", rejected: "Declined", saved: "Saved",
+    token_title: "Connect your Telegram bot", token_hint: "Paste the token from @BotFather",
+    token_connect: "Connect", token_connected: "Bot connected",
+    users: "Users", make_curator: "Make curator", remove_curator: "Remove curator",
+    bot_stop: "Stop", no_token: "bot not connected",
+    approved: "Published", rejected: "Declined", already_decided: "Already decided", saved: "Saved",
     hidden: "Withdrawn", failed: "That did not work", restored: "Back in the queue",
     pending: "in the queue", catalogue_n: "in the catalogue", artists_n: "artists",
     unheard: "never shown", listeners: "listeners this week",
-    plays_n: "plays this week", declined_n: "declined this week",
+    plays_n: "requests this week", declined_n: "declined this week",
     published_n: "published this week", releases_n: "releases",
-    new_playlist: "New playlist", playlist_title: "playlist name",
+    new_playlist: "New playlist", playlist_title: "playlist name", playlist_desc: "description (optional)", add_track: "Add track", choose_track: "choose a track",
     publish_list: "Publish", unpublish: "Unpublish", remove: "remove",
     followers: "followers", saves: "saves", shown: "times shown",
-    plays: "plays",
+    plays: "requests",
     drop_cover: "Drop an image here, or click",
     no_cover: "No artwork — it cannot be published",
     no_tracks: "This release has no tracks",
@@ -86,7 +92,7 @@ const S = {
   release: null,
   catalogue: [], catalogueQuery: "", catalogueStatus: "approved",
   artists: [], artistQuery: "", artist: null,
-  playlists: [], playlist: null,
+  playlists: [], playlist: null, approvedTracks: [],
   draftTags: [],
   busy: false,
   undo: null
@@ -178,7 +184,7 @@ function rail() {
   }
 
   return `<div class="rail">
-    <div class="wordmark">tonearm<small>${esc((S.state && S.state.station) || "")}</small></div>
+    <div class="wordmark">minimalma<small>${esc((S.state && S.state.station) || "")}</small></div>
     ${nav}
     <div class="rail-foot">${botLine}</div>
   </div>`;
@@ -252,7 +258,10 @@ function releaseCard(release, queued) {
        ${release.status === "approved"
          ? `<button class="btn danger" data-act="withdraw">${esc(t("withdraw"))}</button>` : ""}`;
 
+  const cover = release.has_cover && release.tracks && release.tracks.length
+    ? `<img class="cover" alt="" src="${media("cover", release.tracks[0].id)}">` : "";
   return `<div class="card" data-release-card="${release.id}">
+    ${cover}
     <h2>${esc(release.title)}</h2>
     <div class="by">${esc(release.artist)}</div>
     <div class="meta">${esc(bits.join(" · "))}</div>
@@ -341,11 +350,18 @@ function viewPlaylists() {
         `<div class="row"><div><div class="t">${esc(item.title)}</div><div class="a">${esc(item.artist)}</div></div>
          <div class="d"><button class="btn small" data-listdel="${item.id}">${esc(t("remove"))}</button></div></div>`).join("")
         || `<div class="empty">${esc(t("empty"))}</div>`}</div>
+      <div class="section"><label>${esc(t("add_track"))}</label>
+        <select data-listadd><option value="">${esc(t("choose_track"))}</option>
+          ${S.approvedTracks.filter((track) => !S.playlist.tracks.some((item) => item.id === track.id)).map((track) =>
+            `<option value="${track.id}">${esc(track.artist)} — ${esc(track.title)}</option>`).join("")}
+        </select>
+      </div>
     </div>`;
   }
   return `<div class="head">
       <h1>${esc(t("playlists"))}</h1>
       <input class="search" data-newlist placeholder="${esc(t("playlist_title"))}">
+      <input class="search" data-newdesc placeholder="${esc(t("playlist_desc"))}">
       <span class="spacer"></span>
       <button class="btn small" data-act="newlist">${esc(t("new_playlist"))}</button>
     </div>
@@ -353,6 +369,13 @@ function viewPlaylists() {
 }
 
 function viewStation() {
+  if (!S.state || !S.state.has_token) return `<div class="head"><h1>${esc(t("station"))}</h1></div>
+    <div class="pane full"><div class="section connect-card" style="max-width:560px">
+      <h2>${esc(t("token_title"))}</h2>
+      <p class="meta">${esc(t("token_hint"))}</p>
+      <form data-connect-form><input class="search" data-token type="password" autocomplete="off" placeholder="123456789:AA…" required>
+      <button class="btn primary" type="submit">${esc(t("token_connect"))}</button></form>
+    </div></div>`;
   const r = (S.state && S.state.report) || {};
   const cells = [
     [r.pending, t("pending")], [r.releases, t("releases_n")],
@@ -367,11 +390,24 @@ function viewStation() {
       <div class="section" style="max-width:720px">
         <label>${lang === "ru" ? "Кураторы" : "Curators"}</label>
         <div class="meta">${esc(curators)}</div>
-        <div class="meta">${lang === "ru"
-          ? "Добавить: <code>tonearm curator add &lt;telegram id&gt;</code> · свой id — команда /whoami боту"
-          : "Add with <code>tonearm curator add &lt;telegram id&gt;</code> · get yours by sending /whoami to the bot"}</div>
+        <div class="meta">${esc(t("users"))}</div>
+        <div class="users" data-users>Загрузка…</div>
       </div>
     </div>`;
+}
+
+async function loadUsers() {
+  const data = await api("/api/users");
+  const target = document.querySelector("[data-users]");
+  if (!target) return;
+  target.innerHTML = data.items.length ? data.items.map((user) => {
+    const label = user.username ? `@${user.username}` : `ID ${user.id}`;
+    const action = user.role === "user"
+      ? `<button class="btn small" data-user-action="add" data-user-id="${user.id}">${esc(t("make_curator"))}</button>`
+      : user.role === "curator"
+        ? `<button class="btn small" data-user-action="remove" data-user-id="${user.id}">${esc(t("remove_curator"))}</button>` : "владелец";
+    return `<div class="user-row"><span><b>${esc(user.name)}</b><small>${esc(label)} · ${esc(user.id)}</small></span>${action}</div>`;
+  }).join("") : `<div class="meta">${esc(t("empty"))}</div>`;
 }
 
 /* ---------------------------------------------------------------- loading */
@@ -406,6 +442,7 @@ async function loadArtists() {
 
 async function loadPlaylists() {
   S.playlists = (await api("/api/playlists")).items;
+  S.approvedTracks = (await api("/api/tracks?limit=200")).items;
 }
 
 async function go(view) {
@@ -423,6 +460,9 @@ async function go(view) {
     toast(error.message);
   }
   render();
+  if (S.view === "station" && S.state && S.state.has_token) {
+    try { await loadUsers(); } catch (error) { toast(error.message); }
+  }
 }
 
 /* --------------------------------------------------------------- editing */
@@ -457,7 +497,12 @@ async function actRelease(action) {
       }
       offerUndo(release, t("approved"));
     } else if (action === "reject_release") {
-      await api(`/api/reject_release/${release.id}`, { reason: fieldValue("[data-reason]") });
+      const result = await api(`/api/reject_release/${release.id}`, { reason: fieldValue("[data-reason]") });
+      if (!result.ok) {
+        toast(t(result.error === "already_decided" ? "already_decided" : "failed"));
+        S.busy = false;
+        return;
+      }
       offerUndo(release, t("rejected"));
     } else if (action === "withdraw") {
       await api(`/api/withdraw/${release.id}`, {});
@@ -524,7 +569,7 @@ document.addEventListener("click", async (event) => {
   const target = event.target.closest(
     "[data-view],[data-release],[data-artist],[data-playlist]," +
     "[data-act],[data-tag],[data-untag],[data-bot],[data-status],[data-listdel]," +
-    "[data-listpub]"
+    "[data-listpub],[data-user-action]"
   );
   if (!target) return;
   try {
@@ -533,6 +578,10 @@ document.addEventListener("click", async (event) => {
     if (target.dataset.bot) {
       S.state.bot = await api(`/api/bot/${target.dataset.bot}`, {});
       return void render();
+    }
+    if (target.dataset.userAction) {
+      await api(`/api/curator/${target.dataset.userId}`, { action: target.dataset.userAction });
+      await refreshState(); render(); await loadUsers(); return;
     }
     if (target.dataset.status) {
       S.catalogueStatus = target.dataset.status;
@@ -570,11 +619,44 @@ document.addEventListener("click", async (event) => {
       const input = document.querySelector("[data-newlist]");
       const title = input ? input.value.trim() : "";
       if (!title) return;
-      await api("/api/playlist_new", { title });
+      const description = fieldValue("[data-newdesc]");
+      await api("/api/playlist_new", { title, description });
       await loadPlaylists();
       return void render();
     }
     if (act) return void actRelease(act);
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+document.addEventListener("submit", async (event) => {
+  const form = event.target.closest("[data-connect-form]");
+  if (!form) return;
+  event.preventDefault();
+  const input = form.querySelector("[data-token]");
+  const button = form.querySelector("button");
+  button.disabled = true;
+  try {
+    const result = await api("/api/connect", { token: input.value });
+    if (!result.ok) throw new Error(result.error || t("failed"));
+    await refreshState();
+    S.view = "station";
+    toast(t("token_connected") + (result.username ? ` · @${result.username}` : ""));
+    render();
+    await loadUsers();
+  } catch (error) {
+    toast(error.message);
+    button.disabled = false;
+  }
+});
+
+document.addEventListener("change", async (event) => {
+  const select = event.target.closest("[data-listadd]");
+  if (!select || !S.playlist || !select.value) return;
+  try {
+    S.playlist = (await api(`/api/playlist_edit/${S.playlist.id}`, { add: Number(select.value) })).playlist;
+    render();
   } catch (error) {
     toast(error.message);
   }
@@ -640,12 +722,14 @@ document.addEventListener("keydown", async (event) => {
 (async function start() {
   try {
     await refreshState();
-    await loadQueue();
+    if (!S.state.has_token) S.view = "station";
+    else await loadQueue();
   } catch (error) {
     document.getElementById("app").textContent = "не удалось подключиться: " + error.message;
     return;
   }
   render();
+  if (S.view === "station" && S.state && S.state.has_token) await loadUsers();
 
   // Background refresh. Never redraws while the curator is typing or
   // listening: a re-render would drop the caret and restart the player.

@@ -6,11 +6,12 @@ import json
 import os
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
 import pytest
 
-from tonearm import VERSION_LABEL, app, catalog, cli, i18n, ui
+from tonearm import VERSION_LABEL, app, catalog, cli, i18n, recommend, ui
 from tonearm import config as config_mod
 from tonearm.config import Config
 from tonearm.db import SCHEMA_VERSION, Database
@@ -237,7 +238,7 @@ class TestCommandLine:
         self, capsys: pytest.CaptureFixture, tmp_path: Path
     ) -> None:
         assert cli.main([*self._home(tmp_path), "run"]) == 2
-        assert "tonearm setup" in capsys.readouterr().err
+        assert "minimalma" in capsys.readouterr().err
 
     def test_curator_management(self, capsys: pytest.CaptureFixture, tmp_path: Path) -> None:
         assert cli.main([*self._home(tmp_path), "curator", "add", "42"]) == 0
@@ -307,6 +308,61 @@ class TestCommandLine:
 
 
 class TestServiceLoop:
+    def test_repeated_poll_conflicts_stop_the_worker(
+        self, config: Config, db: Database, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from tonearm.telegram import TelegramError
+
+        class ConflictApi(FakeApi):
+            def get_updates(self, *args, **kwargs):
+                raise TelegramError("getUpdates", 409, "Conflict")
+
+        service = app.Service(config, api=ConflictApi(), db=db)
+        monkeypatch.setattr(service._stop, "wait", lambda _seconds: None)
+        service._poll()
+        assert service._stop.is_set()
+
+    def test_run_token_override_is_not_persisted(self, tmp_path: Path, monkeypatch) -> None:
+        parser = cli._parser()
+        args = parser.parse_args(["run", "--token", "1:one-time"])
+        cfg = Config(home=tmp_path)
+        assert args.token == "1:one-time"
+        class StopService:
+            def __init__(self, cfg):
+                pass
+
+            def run(self):
+                raise KeyboardInterrupt()
+
+        monkeypatch.setattr(cli, "Service", StopService)
+        assert cli._run(args, cfg) == 0
+        assert cfg.token == "1:one-time"
+        assert not cfg.config_path.exists()
+
+    def test_desk_token_override_is_not_persisted(self, tmp_path: Path, monkeypatch) -> None:
+        import desk.launch
+
+        parser = cli._parser()
+        args = parser.parse_args(["desk", "--token", "1:one-time", "--no-bot", "--browser"])
+        cfg = Config(home=tmp_path)
+        monkeypatch.setattr(desk.launch, "open_desk", lambda *args, **kwargs: 0)
+        assert cli._desk(args, cfg) == 0
+        assert cfg.token == "1:one-time"
+        assert not cfg.config_path.exists()
+
+    def test_event_retention_removes_only_old_interactions(self, db: Database) -> None:
+        old = int(time.time()) - 200 * 86400
+        db.execute(
+            "INSERT INTO events(user_id, track_id, kind, ts, weight) VALUES(?,?,?,?,?)",
+            (1, None, "play", old, 1.0),
+        )
+        db.execute(
+            "INSERT INTO events(user_id, track_id, kind, ts, weight) VALUES(?,?,?,?,?)",
+            (1, None, "play", int(time.time()), 1.0),
+        )
+        assert recommend.prune_events(db) == 1
+        assert db.scalar("SELECT COUNT(*) FROM events") == 1
+
     def test_updates_are_sharded_by_chat(self) -> None:
         first = app._shard_for(fake.message(111, "a"))
         second = app._shard_for(fake.message(111, "b"))

@@ -15,4 +15,8 @@ htmlcov/
 *.db-wal
 *.db-shm
 config.json
+*.log
+*.log.*
+*.lock
+cache/
 .DS_Store

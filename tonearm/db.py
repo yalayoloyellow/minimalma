@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import threading
 import time
@@ -19,7 +20,7 @@ from typing import Any
 
 log = logging.getLogger("tonearm.db")
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 #: Applied to every connection. ``foreign_keys`` is per-connection in SQLite,
 #: which is the usual reason constraints appear to be silently ignored.
@@ -239,6 +240,37 @@ def _migration_2(conn: sqlite3.Connection) -> None:
 MIGRATIONS.append(_migration_2)
 
 
+def _migration_3(conn: sqlite3.Connection) -> None:
+    """Name the observable signal: an audio request, never a listen."""
+    conn.execute("ALTER TABLE tracks ADD COLUMN requests INTEGER NOT NULL DEFAULT 0")
+    conn.execute("ALTER TABLE tracks ADD COLUMN last_requested_at INTEGER")
+    conn.execute("UPDATE tracks SET requests=plays")
+    conn.execute(
+        "UPDATE tracks SET last_requested_at=(SELECT MAX(ts) FROM events "
+        "WHERE events.track_id=tracks.id AND events.kind='play')"
+    )
+
+
+MIGRATIONS.append(_migration_3)
+
+MIGRATIONS.append(
+    """
+    CREATE TABLE diagnostics (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts         INTEGER NOT NULL,
+        update_id  INTEGER,
+        kind       TEXT NOT NULL,
+        user_id    INTEGER,
+        outcome    TEXT NOT NULL,
+        duration   INTEGER NOT NULL DEFAULT 0,
+        error      TEXT
+    );
+    CREATE INDEX diagnostics_ts ON diagnostics(ts);
+    CREATE INDEX diagnostics_kind ON diagnostics(kind, ts);
+    """
+)
+
+
 def _backfill_releases(conn: sqlite3.Connection) -> None:
     """Give every pre-v2 track a release.
 
@@ -316,6 +348,13 @@ class Database:
         self._local = threading.local()
         self._write_lock = threading.Lock()
         self.migrate()
+        # The database contains Telegram ids, names and interaction history.
+        # Match the config's private permissions; SQLite creates the file
+        # before migrations have anything else to do.
+        try:
+            os.chmod(self.path, 0o600)
+        except OSError:  # pragma: no cover - unusual filesystems
+            pass
 
     # ------------------------------------------------------------ plumbing
     @property
@@ -398,6 +437,27 @@ class Database:
     def transaction(self) -> _Transaction:
         return _Transaction(self)
 
+    def diagnostic(
+        self,
+        kind: str,
+        outcome: str,
+        *,
+        update_id: int | None = None,
+        user_id: int | None = None,
+        duration: int = 0,
+        error: str | None = None,
+    ) -> None:
+        """Persist a compact, secret-free record of one update lifecycle."""
+        self.execute(
+            "INSERT INTO diagnostics(ts, update_id, kind, user_id, outcome, duration, error) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (now(), update_id, kind[:40], user_id, outcome[:24], max(0, duration), error),
+        )
+        self.execute(
+            "DELETE FROM diagnostics WHERE id <= "
+            "(SELECT COALESCE(MAX(id), 0) - 10000 FROM diagnostics)"
+        )
+
     # ----------------------------------------------------------------- meta
     def get_meta(self, key: str, default: Any = None) -> Any:
         raw = self.scalar("SELECT v FROM meta WHERE k=?", (key,))
@@ -448,6 +508,13 @@ class Database:
             ),
             "likes": int(self.scalar("SELECT COUNT(*) FROM likes", default=0)),
             "events": int(self.scalar("SELECT COUNT(*) FROM events", default=0)),
+            "diagnostics": int(self.scalar("SELECT COUNT(*) FROM diagnostics", default=0)),
+            "diagnostic_errors": int(
+                self.scalar(
+                    "SELECT COUNT(*) FROM diagnostics WHERE outcome IN ('telegram_error','crash')",
+                    default=0,
+                )
+            ),
         }
 
 

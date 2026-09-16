@@ -119,6 +119,61 @@ class TestArtwork:
         ]
         assert len(cards) == 1
 
+    def test_release_artwork_is_materialised_on_each_coverless_audio(
+        self, bot: handlers.Bot, api: FakeApi, db: Database, config: Config
+    ) -> None:
+        api.files["n-audio"] = b"audio-bytes"
+        api.files["sent:cover"] = b"cover-bytes"
+        bot.handle(fake.audio_message(ARTIST, "n-audio", "n-audio", title="Bare", performer="A"))
+        release_id = int(db.scalar("SELECT release_id FROM tracks WHERE file_unique_id='n-audio'"))
+        photo = fake.message(ARTIST, "")
+        photo["message"].pop("text")
+        photo["message"]["photo"] = [{"file_id": "sent:cover", "width": 800, "height": 800}]
+        bot.handle(photo)
+        row = db.one("SELECT file_id, cover_file_id FROM tracks WHERE release_id=?", (release_id,))
+        assert row["file_id"].startswith("recreated:")
+        assert row["cover_file_id"] == "sent:cover"
+        rebuilt = [call for call in api.of("sendAudio") if isinstance(call["audio"], bytes)]
+        assert len(rebuilt) == 1 and rebuilt[0]["thumbnail_bytes"] == b"cover-bytes"
+
+    def test_one_failed_audio_recreation_does_not_abort_the_release(
+        self, bot: handlers.Bot, api: FakeApi, db: Database
+    ) -> None:
+        api.files["first-audio"] = b"first"
+        api.files["second-audio"] = b"second"
+        bot.handle(
+            fake.audio_message(
+                ARTIST, "first-audio", "first-u", title="One", performer="A", album="Pair"
+            )
+        )
+        bot.handle(
+            fake.audio_message(
+                ARTIST, "second-audio", "second-u", title="Two", performer="A", album="Pair"
+            )
+        )
+        release_id = int(db.scalar("SELECT release_id FROM tracks WHERE file_unique_id='first-u'"))
+        api.files["sent:cover"] = b"cover"
+        original = api.send_audio
+        failed = {"value": True}
+
+        def flaky(chat_id: int, audio: str | bytes, **kw: object) -> dict[str, object]:
+            if isinstance(audio, bytes) and failed["value"]:
+                failed["value"] = False
+                raise RuntimeError("temporary Telegram error")
+            return original(chat_id, audio, **kw)
+
+        api.send_audio = flaky  # type: ignore[method-assign]
+        photo = fake.message(ARTIST, "")
+        photo["message"].pop("text")
+        photo["message"]["photo"] = [{"file_id": "sent:cover", "width": 800, "height": 800}]
+        bot.handle(photo)
+
+        rows = db.query(
+            "SELECT file_id FROM tracks WHERE release_id=? ORDER BY track_no", (release_id,)
+        )
+        assert rows[0]["file_id"] == "first-audio"
+        assert str(rows[1]["file_id"]).startswith("recreated:")
+
     def test_only_the_submitter_can_set_the_artwork(self, bot: handlers.Bot, db: Database) -> None:
         bot.handle(fake.audio_message(ARTIST, "n4", "nn4", title="Bare", performer="A"))
         release_id = int(db.scalar("SELECT release_id FROM tracks WHERE file_unique_id='nn4'"))
@@ -139,6 +194,18 @@ class TestArtwork:
         assert len(drafts) == 1 and drafts[0]["missing"] == ["no_cover"]
         bot.handle(fake.message(ARTIST, "/submit"))
         assert "нет обложки" in api.last_screen() or "artwork missing" in api.last_screen()
+
+    def test_submit_screen_button_reenters_cover_upload(self, bot: handlers.Bot, api: FakeApi, db: Database) -> None:
+        bot.handle(fake.audio_message(ARTIST, "n8", "nn8", title="Bare", performer="A"))
+        api.clear()
+        bot.handle(fake.message(ARTIST, "/submit"))
+        callback = api.find_button("cov|")
+        assert callback
+
+        bot.handle(fake.callback(ARTIST, callback))
+
+        assert db.scalar("SELECT state FROM users WHERE id=?", (ARTIST,)) == "covr:1"
+        assert "обложк" in api.last_screen() or "artwork" in api.last_screen()
 
     def test_a_track_inherits_the_release_cover(self, bot: handlers.Bot, db: Database) -> None:
         bot.handle(fake.audio_message(ARTIST, "n5", "nn5", title="Bare", performer="A"))

@@ -140,9 +140,9 @@ class TestNoEngagementTheatre:
     ) -> None:
         artist_id = int(db.scalar("SELECT artist_id FROM tracks WHERE id=?", (seeded[0],)))
         db.execute("UPDATE artists SET user_id=? WHERE id=?", (ARTIST, artist_id))
-        db.execute("UPDATE tracks SET plays=12 WHERE artist_id=?", (artist_id,))
+        db.execute("UPDATE tracks SET requests=12 WHERE artist_id=?", (artist_id,))
         bot.handle(fake.callback(ARTIST, f"artist|{artist_id}"))
-        assert "24 plays" in api.last_screen()  # two tracks by this artist
+        assert "24 requests" in api.last_screen()  # two tracks by this artist
 
     def test_no_streaks_badges_or_urgency_in_any_string(self) -> None:
         banned = re.compile(

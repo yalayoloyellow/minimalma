@@ -326,9 +326,11 @@ moment when someone will actually fix it. The artist is asked for artwork the
 instant it is missing, because they can solve it in one message.
 
 Cover resolution is layered — Telegram's own thumbnail first (it is already a
-durable photo `file_id`, so nothing is uploaded and nothing can be lost), then
-art embedded in the file, then an image sent by hand. A track with no cover of
-its own inherits the release's.
+durable photo `file_id`), then art embedded in the file, then an image sent by
+hand. Release artwork and an audio's own thumbnail are separate states. When a
+track has no Telegram thumbnail, the bot re-uploads that audio once with a
+compact JPEG thumbnail after the release cover exists; the old `file_id` stays
+available if Telegram cannot download or recreate the file.
 
 **Delivery.** A release page is a photo message with the tracklist as its
 caption, which is why `ui.Screen` grew a `photo` field. Telegram cannot edit a

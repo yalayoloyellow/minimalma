@@ -24,7 +24,9 @@ Hard rules
 
 Nothing here optimises for session length, skip rate or return frequency. The
 ranking objective is "would this listener keep this track", approximated by
-likes and completions, and that is the only objective.
+explicit saves/likes and requests. Telegram does not expose reliable playback
+completion events, so the engine never treats a delivered audio message as a
+completed listen.
 """
 
 from __future__ import annotations
@@ -50,12 +52,11 @@ log = logging.getLogger("tonearm.recommend")
 INTERACTION_WEIGHTS = {
     "like": 1.0,
     "save": 0.8,
-    "complete": 0.6,
     "follow": 0.5,
     "play": 0.2,
     "skip": -0.25,
 }
-POSITIVE_KINDS = ("like", "save", "complete", "play", "follow")
+POSITIVE_KINDS = ("like", "save", "play", "follow")
 
 #: Neighbours stored per track.
 TOP_K = 40
@@ -194,7 +195,7 @@ class Engine:
         rows = self.db.query(
             "SELECT track_id, kind, ts, weight FROM events "
             "WHERE user_id=? AND track_id IS NOT NULL AND kind IN "
-            "('like','save','complete','play','skip') ORDER BY ts DESC LIMIT 600",
+            "('like','save','play','skip') ORDER BY ts DESC LIMIT 600",
             (user_id,),
         )
         stamp = now()
@@ -257,7 +258,7 @@ class Engine:
         rows = self.db.query(
             "SELECT user_id, track_id, SUM(weight) AS w FROM events "
             "WHERE track_id IS NOT NULL AND kind IN "
-            "('like','save','complete','play') "
+            "('like','save','play') "
             "GROUP BY user_id, track_id HAVING w > 0"
         )
         by_user: dict[int, list[tuple[int, float]]] = {}
@@ -306,7 +307,7 @@ class Engine:
         """Tracks the listener has already been served."""
         rows = self.db.query(
             "SELECT DISTINCT track_id FROM events WHERE user_id=? AND track_id IS NOT NULL "
-            "AND kind IN ('play','complete','skip','like','save')",
+            "AND kind IN ('play','skip','like','save')",
             (user_id,),
         )
         return {int(row["track_id"]) for row in rows}
@@ -342,7 +343,7 @@ class Engine:
         collaborative: dict[int, float] = dict(seed_boost or {})
         seeds = self.db.query(
             "SELECT track_id, SUM(weight) AS w FROM events "
-            "WHERE user_id=? AND track_id IS NOT NULL AND kind IN ('like','save','complete') "
+            "WHERE user_id=? AND track_id IS NOT NULL AND kind IN ('like','save') "
             "GROUP BY track_id ORDER BY w DESC LIMIT 60",
             (user_id,),
         )
@@ -525,6 +526,81 @@ class Engine:
         scored = self.rank(user_id, candidates)
         return self.diversify(scored, count)
 
+    def new_releases(self, user_id: int, days: int = 7, count: int = 8) -> list[int]:
+        """Recent approved tracks, diversified and lightly personalized.
+
+        The window is intentional: Telegram users need a stable shelf they can
+        return to, while a niche catalogue still needs a place where genuinely
+        new work is visible before it accumulates interactions.
+        """
+        cutoff = int(time.time()) - max(1, days) * 86400
+        rows = self.db.query(
+            "SELECT id FROM tracks WHERE status='approved' AND published_at>=? "
+            "ORDER BY published_at DESC, id DESC LIMIT 400",
+            (cutoff,),
+        )
+        candidates = [int(row["id"]) for row in rows]
+        if not candidates:
+            candidates = [
+                int(row["id"])
+                for row in self.db.query(
+                    "SELECT id FROM tracks WHERE status='approved' "
+                    "ORDER BY published_at DESC, id DESC LIMIT 400"
+                )
+            ]
+        if not candidates:
+            return []
+        return self.diversify(self.rank(user_id, candidates), count)
+
+    def popular(self, user_id: int, days: int = 30, count: int = 8) -> list[int]:
+        """Recent listener response, damped by exposure and artist concentration."""
+        cutoff = int(time.time()) - max(1, days) * 86400
+        rows = self.db.query(
+            "SELECT t.id, COALESCE(SUM(e.weight), 0) AS signal, t.exposures "
+            "FROM tracks t LEFT JOIN events e ON e.track_id=t.id AND e.ts>=? "
+            "AND e.kind IN ('play','skip','like','save') "
+            "WHERE t.status='approved' GROUP BY t.id "
+            "ORDER BY signal DESC, t.published_at DESC LIMIT 400",
+            (cutoff,),
+        )
+        ranked = {
+            int(row["id"]): math.log1p(max(0.0, float(row["signal"])))
+            / math.sqrt(float(row["exposures"] or 0) + 1.0)
+            for row in rows
+        }
+        candidates = list(ranked)
+        if not candidates:
+            return []
+        return self.diversify(sorted(ranked.items(), key=lambda item: item[1], reverse=True), count)
+
+    def following_new(self, user_id: int, days: int = 30, count: int = 8) -> list[int]:
+        cutoff = int(time.time()) - max(1, days) * 86400
+        rows = self.db.query(
+            "SELECT t.id FROM tracks t JOIN follows f ON f.artist_id=t.artist_id "
+            "WHERE f.user_id=? AND t.status='approved' AND t.published_at>=? "
+            "ORDER BY t.published_at DESC LIMIT 400",
+            (user_id, cutoff),
+        )
+        return [int(row["id"]) for row in rows[:count]]
+
+    def similar_to_saved(self, user_id: int, count: int = 8) -> list[int]:
+        saved = [int(row["id"]) for row in self.db.query(
+            "SELECT track_id AS id FROM likes WHERE user_id=? ORDER BY ts DESC LIMIT 20",
+            (user_id,),
+        )]
+        if not saved:
+            return self.new_releases(user_id, count=count)
+        out: list[int] = []
+        seen = set(saved)
+        for track_id in saved:
+            for candidate in self.similar_to(track_id, count=count):
+                if candidate not in seen:
+                    out.append(candidate)
+                    seen.add(candidate)
+                    if len(out) >= count:
+                        return out
+        return out
+
     def similar_to(self, track_id: int, count: int = 8) -> list[int]:
         """Neighbours of a track: collaborative first, content to fill in."""
         out: list[int] = []
@@ -614,16 +690,27 @@ class Engine:
 
 def record(db: Database, user_id: int, track_id: int | None, kind: str) -> None:
     """Append one interaction. This is the only writer of ``events``."""
-    weight = INTERACTION_WEIGHTS.get(kind, 0.0)
+    # Telegram cannot report playback completion. Unknown/legacy events are
+    # ignored rather than turning an unobservable signal into a fake metric.
+    if kind not in INTERACTION_WEIGHTS:
+        return
+    weight = INTERACTION_WEIGHTS[kind]
     db.execute(
         "INSERT INTO events(user_id, track_id, kind, ts, weight) VALUES(?,?,?,?,?)",
         (user_id, track_id, kind, now(), weight),
     )
     if track_id is None:
         return
-    column = {"play": "plays", "complete": "completes"}.get(kind)
+    column = {"play": "plays"}.get(kind)
     if column:
-        db.execute(f"UPDATE tracks SET {column} = {column} + 1 WHERE id=?", (track_id,))
+        if kind == "play":
+            db.execute(
+                "UPDATE tracks SET plays=plays+1, requests=requests+1, "
+                "last_requested_at=? WHERE id=?",
+                (now(), track_id),
+            )
+        else:
+            db.execute(f"UPDATE tracks SET {column} = {column} + 1 WHERE id=?", (track_id,))
 
 
 def record_exposure(db: Database, track_ids: Iterable[int]) -> None:
@@ -631,6 +718,13 @@ def record_exposure(db: Database, track_ids: Iterable[int]) -> None:
     ids = [(int(track_id),) for track_id in track_ids]
     if ids:
         db.executemany("UPDATE tracks SET exposures = exposures + 1 WHERE id=?", ids)
+
+
+def prune_events(db: Database, keep_days: int = 180) -> int:
+    """Bound interaction history while retaining enough taste signal."""
+    cutoff = now() - max(30, int(keep_days)) * 86400
+    cursor = db.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
+    return int(cursor.rowcount)
 
 
 # --------------------------------------------------------------------------

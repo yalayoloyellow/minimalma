@@ -17,14 +17,14 @@ from .app import Service, configure_logging
 from .db import Database
 from .telegram import Api, NetworkError, TelegramError
 
-BANNER = "tonearm " + VERSION_LABEL
+BANNER = "minimalma " + VERSION_LABEL
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if not args.command:
-        # Bare `tonearm` opens the desk when it is present, because that is
+        # Bare `minimalma` opens the desk when it is present, because that is
         # what someone double-clicking or typing the name wants. Global flags
         # already parsed (--home) are carried over rather than re-parsed.
         if _desk_available():
@@ -47,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="tonearm",
+        prog="minimalma",
         description="A curated music streaming service that runs inside a Telegram bot.",
     )
     parser.add_argument("--version", action="version", version=BANNER)
@@ -57,9 +57,11 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     run = sub.add_parser("run", help="start the bot (headless)")
+    run.add_argument("--token", help="one-time bot token; never written to config")
     run.set_defaults(handler=_run)
 
     desk = sub.add_parser("desk", help="open the curation desk")
+    desk.add_argument("--token", help="one-time bot token; never written to config")
     desk.add_argument("--port", type=int, default=0, help="fixed port instead of a free one")
     desk.add_argument("--browser", action="store_true", help="skip the native window")
     desk.add_argument("--no-bot", action="store_true", help="do not start the bot with the desk")
@@ -104,8 +106,10 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _run(args: argparse.Namespace, cfg: config_mod.Config) -> int:
+    if getattr(args, "token", None):
+        cfg.token = args.token.strip()
     if not cfg.token:
-        _fail("no bot token configured. Run: tonearm setup")
+        _fail("no bot token configured. Connect a bot in minimalma")
         return 2
     configure_logging(cfg)
     try:
@@ -141,6 +145,8 @@ def _desk(args: argparse.Namespace, cfg: config_mod.Config) -> int:
     except ImportError as exc:
         _fail(f"the desk is not available in this installation: {exc}")
         return 2
+    if getattr(args, "token", None):
+        cfg.token = args.token.strip()
     configure_logging(cfg)
     desk = Desk(cfg)
     if not args.no_bot and cfg.token:
@@ -207,8 +213,8 @@ def _setup(args: argparse.Namespace, cfg: config_mod.Config) -> int:
     else:
         print("  ffmpeg         not found — audio analysis disabled (everything else works)")
     print()
-    print("Open the curation desk with:  tonearm desk")
-    print("Or run headless with:          tonearm run")
+    print("Open the curation desk with:  minimalma desk")
+    print("Or run headless with:          minimalma run")
     return 0
 
 
@@ -245,7 +251,7 @@ def _doctor(args: argparse.Namespace, cfg: config_mod.Config) -> int:
     print(f"  python         {sys.version.split()[0]}")
     print(f"  home           {cfg.home}")
     print(f"  config         {'present' if cfg.config_path.exists() else 'missing'}")
-    print(f"  token          {'set' if cfg.token else 'MISSING — run tonearm setup'}")
+    print(f"  token          {'set' if cfg.token else 'MISSING — connect a bot in minimalma'}")
     curators = len(set(cfg.curators) | ({cfg.owner} if cfg.owner else set()))
     print(f"  curators       {curators}" + ("" if curators else "  — nothing can be published"))
 
@@ -263,6 +269,7 @@ def _doctor(args: argparse.Namespace, cfg: config_mod.Config) -> int:
         f"{stats['rejected']} declined"
     )
     print(f"  listeners      {stats['users']}  ·  {stats['likes']} saved tracks")
+    print(f"  diagnostics    {stats['diagnostics']} events · {stats['diagnostic_errors']} errors")
 
     if cfg.token:
         try:
@@ -338,7 +345,7 @@ def _ask(prompt: str) -> str:
 
 
 def _fail(message: str) -> None:
-    print(f"tonearm: {message}", file=sys.stderr)
+    print(f"minimalma: {message}", file=sys.stderr)
 
 
 def entry() -> None:  # pragma: no cover - console script shim

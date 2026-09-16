@@ -161,6 +161,11 @@ def track_buttons(
         button(t(lang, "track.similar"), pack("similar", track_id)),
     ]
     rows = [first]
+    # Telegram audio keeps the file's original thumbnail.  The release
+    # button is the durable way to reach the release artwork and full track
+    # list, including for audio that arrived without embedded art.
+    if item.get("release_id"):
+        rows.append([button(t(lang, "release.open"), pack("rl", item["release_id"]))])
     if context and position is not None and total is not None and position + 1 < total:
         rows.append(
             [
@@ -207,6 +212,11 @@ def home(
         )
     )
     rows = [
+        [button(t(lang, "nav.for_you"), pack("nav", "for_you"))],
+        [
+            button(t(lang, "nav.new_week"), pack("nav", "new_week")),
+            button(t(lang, "nav.popular"), pack("nav", "popular")),
+        ],
         [button(t(lang, "nav.today"), pack("nav", "today"))],
         [
             button(t(lang, "nav.discover"), pack("nav", "discover")),
@@ -338,6 +348,8 @@ def library_screen(
         rows.extend(numbered([item["id"] for item in saved], "play"))
     if follows:
         rows.append([button(t(lang, "library.following"), pack("nav", "follows"))])
+        rows.append([button(t(lang, "nav.following_new"), pack("nav", "following_new"))])
+    rows.append([button(t(lang, "nav.similar_saved"), pack("nav", "similar_saved"))])
     rows.append([button(t(lang, "nav.home"), pack("nav", "home"))])
     return Screen("\n".join(lines), keyboard(*rows))
 
@@ -377,7 +389,7 @@ def artist_screen(
         lines.append("")
         lines.append(
             f"<i>{esc(t(lang, 'stats.mine'))}</i> · "
-            f"{stats.get('plays', 0)} plays · {stats.get('likes', 0)} saved · "
+            f"{stats.get('requests', stats.get('plays', 0))} requests · {stats.get('likes', 0)} saved · "
             f"{stats.get('followers', 0)} following"
         )
     lines.append("")
@@ -648,6 +660,11 @@ def inline_results(items: Sequence[dict[str, Any]], lang: str) -> list[dict[str,
                 "audio_file_id": item["file_id"],
                 "caption": track_caption(item, lang, with_note=False),
                 "parse_mode": "HTML",
+                "reply_markup": keyboard(
+                    [button(t(lang, "release.open"), pack("rl", item["release_id"]))]
+                )
+                if item.get("release_id")
+                else None,
             }
         )
     return out

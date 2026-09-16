@@ -17,7 +17,7 @@ from .server import Desk, serve
 
 log = logging.getLogger("tonearm.desk")
 
-WINDOW_TITLE = "Tonearm"
+WINDOW_TITLE = "minimalma"
 WINDOW_SIZE = (1180, 780)
 WINDOW_MIN = (900, 600)
 

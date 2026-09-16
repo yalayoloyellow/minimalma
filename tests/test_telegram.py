@@ -38,6 +38,29 @@ class TestMultipart:
         body, _ = telegram._encode_multipart({}, {"f": ('e"vil\r\nX: y', b"data")})
         assert b'filename="evilX: y"' in body
 
+    def test_audio_and_thumbnail_are_uploaded_as_two_files(self) -> None:
+        api = telegram.Api("1:test")
+        captured: dict[str, Any] = {}
+
+        def fake(method: str, params: dict[str, Any], files: Any = None) -> dict[str, Any]:
+            captured.update(method=method, params=params, files=files)
+            return {"audio": {"file_id": "new-audio"}}
+
+        api._forgiving = fake  # type: ignore[method-assign]
+        result = api.send_audio(
+            42,
+            b"audio-bytes",
+            filename="track.mp3",
+            thumbnail_bytes=b"cover-bytes",
+            title="Track",
+        )
+        assert result == {"audio": {"file_id": "new-audio"}}
+        assert captured["method"] == "sendAudio"
+        assert captured["files"] == {
+            "audio": ("track.mp3", b"audio-bytes"),
+            "thumbnail": ("cover.jpg", b"cover-bytes"),
+        }
+
 
 class TestErrors:
     @pytest.mark.parametrize(
